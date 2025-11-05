@@ -15,7 +15,7 @@ python --version
 ### 2. 安装依赖
 
 ```bash
-cd alert_system
+cd Whatalert
 pip install -r requirements.txt
 ```
 
@@ -48,13 +48,14 @@ redis:
 ### 4. 初始化数据库
 
 ```bash
-python scripts/init_db.py
+mysql -u root -p whatalert < scripts/init_database.sql
 ```
 
 输出:
 ```
-✅ 数据库表创建成功
-✅ 默认数据创建成功
+数据库初始化完成！
+默认管理员账号: admin
+默认管理员密码: admin123
 
 默认账户信息:
   管理员: admin / admin123

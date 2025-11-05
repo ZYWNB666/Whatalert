@@ -82,7 +82,7 @@
 ```bash
 # 克隆代码
 git clone <your-repo>
-cd Whatalert/alert_system
+cd Whatalert
 
 # 配置
 cp config/config.example.yaml config/config.yaml
@@ -120,7 +120,7 @@ kubectl apply -f k8s/
 ## 📁 项目结构
 
 ```
-alert_system/
+Whatalert/
 ├── app/                      # 后端应用
 │   ├── api/                  # API 路由
 │   ├── core/                 # 核心功能（锁、会话）
@@ -132,10 +132,9 @@ alert_system/
 ├── config/                   # 配置文件
 │   ├── config.yaml           # 主配置
 │   └── config.example.yaml   # 配置示例
-├── scripts/                  # 工具脚本
+├── scripts/                  # SQL 脚本
 │   ├── init_database.sql     # 数据库初始化
-│   ├── clear_database.sql    # 清空数据库
-│   └── *.py                  # 管理脚本
+│   └── clear_database.sql    # 清空数据库
 ├── docs/                     # 文档
 ├── Dockerfile                # 后端镜像
 ├── docker-compose.yml        # Compose配置
@@ -183,33 +182,30 @@ logging:
 
 ---
 
-## 🛠️ 管理工具
-
-### 重置管理员密码
-
-```bash
-# Docker
-docker exec -it whatalert-backend python scripts/reset_admin_password.py
-
-# Kubernetes
-kubectl exec -it deployment/whatalert-backend -n whatalert -- \
-  python scripts/reset_admin_password.py
-```
+## 🛠️ 数据库管理
 
 ### 初始化数据库
 
 ```bash
-# 方式1：使用SQL
+# 首次部署时执行
 mysql -u root -p whatalert < scripts/init_database.sql
-
-# 方式2：使用Python脚本
-python scripts/init_db.py
 ```
 
 ### 清空数据库
 
 ```bash
+# ⚠️ 警告：会清空所有数据！
 mysql -u root -p whatalert < scripts/clear_database.sql
+```
+
+### 在容器中操作
+
+```bash
+# Docker Compose
+docker exec -it alert-mysql mysql -uroot -p
+
+# Kubernetes
+kubectl exec -it statefulset/mysql -n whatalert -- mysql -uroot -p
 ```
 
 ---

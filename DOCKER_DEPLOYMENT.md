@@ -9,7 +9,7 @@
 ```bash
 # 克隆代码
 git clone <your-repo>
-cd Whatalert/alert_system
+cd Whatalert
 
 # 配置环境
 cp config/config.example.yaml config/config.yaml
@@ -28,8 +28,8 @@ docker-compose down
 #### docker-compose.yml 说明
 
 当前配置包含：
-- **alert_system**: 后端 API 服务（端口 8000）
-- **web**: 前端 Vue 应用（端口 80）
+- **backend**: 后端 API 服务（端口 8000）
+- **frontend**: 前端 Vue 应用（端口 80）
 - **mysql**: MySQL 数据库（端口 3306）
 - **redis**: Redis 缓存（端口 6379）
 
@@ -38,14 +38,14 @@ docker-compose down
 #### 构建后端镜像
 
 ```bash
-cd alert_system
+cd Whatalert
 docker build -t whatalert-backend:latest .
 ```
 
 #### 构建前端镜像
 
 ```bash
-cd alert_system/web
+cd Whatalert/web
 docker build -t whatalert-frontend:latest .
 ```
 
@@ -549,8 +549,9 @@ kubectl exec -it statefulset/mysql -n whatalert -- \
 ### 重置管理员密码
 
 ```bash
-# 进入后端容器
-kubectl exec -it deployment/whatalert-backend -n whatalert -- python scripts/reset_admin_password.py
+# 直接连接数据库修改（密码：admin123）
+kubectl exec -it statefulset/mysql -n whatalert -- mysql -uroot -p -e \
+  "UPDATE whatalert.user SET password_hash='$2b$12$cpLHuqRo2MqsW/CNjTLKPOJkG8ofG6mD3fUCMaOMA05zf3ap8rnUy' WHERE username='admin';"
 ```
 
 ---

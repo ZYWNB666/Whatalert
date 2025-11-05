@@ -47,26 +47,23 @@
 
 ## 初始化权限
 
-首次部署系统后，需要运行以下脚本初始化权限：
+首次部署系统后，使用数据库初始化脚本会自动创建权限系统：
 
 ```bash
-cd alert_system
-python scripts/init_permissions.py
+mysql -u root -p whatalert < scripts/init_database.sql
 ```
 
 该脚本会：
 1. 创建所有系统权限
 2. 创建三种预定义角色
 3. 为角色分配相应权限
+4. 创建默认管理员账号
 
 ## 分配角色给用户
 
-### 为管理员用户分配admin角色
+### 通过Web界面分配角色
 
-```bash
-cd alert_system
-python scripts/assign_admin_role.py
-```
+管理员登录后，在 **系统管理 > 用户管理** 中可以为用户分配角色。
 
 该脚本会自动为所有超级管理员（`is_superuser=True`）分配admin角色。
 
@@ -130,5 +127,5 @@ const canManage = userStore.hasAnyPermission([
 
 ## 自定义权限
 
-如果需要添加新的权限，请修改 `scripts/init_permissions.py` 中的 `PERMISSIONS` 列表，然后重新运行初始化脚本。
+如果需要添加新的权限，请修改 `scripts/init_database.sql` 中的权限插入语句，然后重新初始化数据库。
 
