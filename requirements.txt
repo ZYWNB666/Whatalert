@@ -1,0 +1,52 @@
+# Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+gunicorn==21.2.0
+python-multipart==0.0.6
+
+# Database
+sqlalchemy==2.0.23
+alembic==1.13.0
+aiomysql==0.2.0  # MySQL async driver
+PyMySQL==1.1.0   # MySQL sync driver (fallback)
+
+# Redis (5.x 自带异步支持)
+redis==5.0.1
+
+# Authentication
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# Data Validation
+pydantic==2.5.0
+pydantic-settings==2.1.0
+email-validator==2.1.0
+
+# Monitoring Data Sources
+prometheus-api-client==0.5.3
+requests==2.31.0
+
+# Task Scheduling
+apscheduler==3.10.4
+
+# Notifications
+httpx==0.25.2  # 异步 HTTP 客户端
+aiosmtplib==3.0.1  # 异步邮件
+jinja2==3.1.2  # 模板引擎
+
+# Utilities
+python-dotenv==1.0.0
+pyyaml==6.0.1
+loguru==0.7.2
+tenacity==8.2.3  # 重试机制
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+
+# Development
+black==23.12.0
+flake8==6.1.0
+mypy==1.7.1
+

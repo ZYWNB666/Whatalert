@@ -1,0 +1,200 @@
+<template>
+  <el-container class="main-layout">
+    <el-aside width="240px" class="sidebar">
+      <div class="logo">
+        <el-icon class="logo-icon"><Bell /></el-icon>
+        <span class="logo-text">监控告警系统</span>
+      </div>
+      <el-menu
+        :default-active="activeMenu"
+        class="el-menu-vertical"
+        :router="true"
+      >
+        <template v-for="route in menuRoutes" :key="route.path">
+          <el-menu-item 
+            v-if="!route.meta?.hidden"
+            :index="route.path"
+          >
+            <el-icon v-if="route.meta?.icon">
+              <component :is="route.meta.icon" />
+            </el-icon>
+            <span>{{ route.meta?.title }}</span>
+          </el-menu-item>
+        </template>
+      </el-menu>
+    </el-aside>
+    
+    <el-container>
+      <el-header class="header">
+        <div class="header-left">
+          <el-breadcrumb separator="/">
+            <el-breadcrumb-item>{{ currentTitle }}</el-breadcrumb-item>
+          </el-breadcrumb>
+        </div>
+        <div class="header-right">
+          <el-dropdown>
+            <div class="user-info">
+              <el-icon><User /></el-icon>
+              <span>{{ userStore.userInfo?.email || '用户' }}</span>
+            </div>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item @click="handleProfile">
+                  <el-icon><Setting /></el-icon>
+                  个人设置
+                </el-dropdown-item>
+                <el-dropdown-item divided @click="handleLogout">
+                  <el-icon><SwitchButton /></el-icon>
+                  退出登录
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+      </el-header>
+      
+      <el-main class="main-content">
+        <router-view v-slot="{ Component }">
+          <keep-alive>
+            <component :is="Component" />
+          </keep-alive>
+        </router-view>
+      </el-main>
+    </el-container>
+  </el-container>
+</template>
+
+<script setup>
+import { computed } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import { useUserStore } from '@/stores/user'
+import { ElMessage, ElMessageBox } from 'element-plus'
+
+const router = useRouter()
+const route = useRoute()
+const userStore = useUserStore()
+
+const menuRoutes = computed(() => {
+  const allRoutes = router.getRoutes()
+    .find(r => r.path === '/')
+    ?.children || []
+  
+  // 根据用户权限过滤菜单
+  return allRoutes.filter(route => {
+    // 没有权限要求的路由，所有人都可以访问
+    if (!route.meta?.permission) return true
+    
+    // 检查用户是否有权限
+    return userStore.hasPermission(route.meta.permission)
+  })
+})
+
+const activeMenu = computed(() => {
+  return '/' + route.path.split('/')[1]
+})
+
+const currentTitle = computed(() => {
+  return route.meta?.title || '概览'
+})
+
+const handleProfile = () => {
+  router.push('/profile')
+}
+
+const handleLogout = async () => {
+  try {
+    await ElMessageBox.confirm('确定要退出登录吗？', '提示', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+    
+    userStore.logout()
+    router.push('/login')
+    ElMessage.success('已退出登录')
+  } catch (e) {
+    // 取消
+  }
+}
+</script>
+
+<style scoped lang="scss">
+.main-layout {
+  height: 100vh;
+}
+
+.sidebar {
+  background: #001529;
+  color: #fff;
+  
+  .logo {
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: bold;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    
+    .logo-icon {
+      font-size: 24px;
+      margin-right: 8px;
+    }
+  }
+  
+  .el-menu {
+    border-right: none;
+    background: #001529;
+    
+    :deep(.el-menu-item) {
+      color: rgba(255, 255, 255, 0.65);
+      
+      &:hover {
+        color: #fff;
+        background: rgba(255, 255, 255, 0.08);
+      }
+      
+      &.is-active {
+        color: #fff;
+        background: #1890ff;
+      }
+    }
+  }
+}
+
+.header {
+  background: #fff;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  
+  .header-left {
+    .el-breadcrumb {
+      font-size: 16px;
+    }
+  }
+  
+  .header-right {
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      padding: 8px 12px;
+      border-radius: 4px;
+      
+      &:hover {
+        background: #f5f7fa;
+      }
+    }
+  }
+}
+
+.main-content {
+  background: #f5f7fa;
+  padding: 20px;
+}
+</style>
+

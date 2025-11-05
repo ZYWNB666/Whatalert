@@ -1,0 +1,21 @@
+# 监控告警系统配置文件
+# 只需配置数据库和 Redis 连接即可！
+
+# MySQL 数据库配置
+database:
+  host: "localhost"
+  port: 3306
+  username: "alert_user"
+  password: "alert_password"
+  database: "alert_system"
+
+# Redis 配置
+redis:
+  host: "localhost"
+  port: 6379
+  password: ""
+  db: 0
+
+# 日志配置
+logging:
+  level: "INFO"  # 可选: DEBUG, INFO, WARNING, ERROR, CRITICAL
