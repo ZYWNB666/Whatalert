@@ -17,6 +17,7 @@ class AlertRule(BaseModel):
     # 评估配置
     eval_interval = Column(Integer, default=60, nullable=False, comment="评估间隔(秒)")
     for_duration = Column(Integer, default=60, comment="持续时间(秒)")  # 满足条件持续多久才告警
+    repeat_interval = Column(Integer, default=1800, nullable=False, comment="重复发送间隔(秒)")  # 默认30分钟
     
     # 告警等级
     severity = Column(String(20), default="warning", comment="告警等级")  # critical, warning, info
@@ -38,11 +39,13 @@ class AlertRule(BaseModel):
     # 数据源
     datasource_id = Column(Integer, ForeignKey('datasource.id', ondelete='CASCADE'), nullable=False)
     
-    # 多租户
+    # 多租户和项目
     tenant_id = Column(Integer, ForeignKey('tenant.id', ondelete='CASCADE'), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey('project.id', ondelete='CASCADE'), nullable=True, index=True, comment="项目ID")
     
     # 关系
     tenant = relationship("Tenant", back_populates="alert_rules")
+    project = relationship("Project", back_populates="alert_rules")
     datasource = relationship("DataSource", back_populates="alert_rules")
     events = relationship("AlertEvent", back_populates="rule", cascade="all, delete-orphan")
 
@@ -80,8 +83,9 @@ class AlertEvent(BaseModel):
     # 查询语句
     expr = Column(Text, comment="查询表达式")
     
-    # 多租户
+    # 多租户和项目
     tenant_id = Column(Integer, ForeignKey('tenant.id', ondelete='CASCADE'), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey('project.id', ondelete='CASCADE'), nullable=True, index=True, comment="项目ID")
     
     # 关系
     rule = relationship("AlertRule", back_populates="events")
@@ -109,8 +113,9 @@ class AlertEventHistory(BaseModel):
     annotations = Column(JSON, default={}, comment="注释")
     expr = Column(Text, comment="查询表达式")
     
-    # 多租户
+    # 多租户和项目
     tenant_id = Column(Integer, ForeignKey('tenant.id', ondelete='CASCADE'), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey('project.id', ondelete='CASCADE'), nullable=True, index=True, comment="项目ID")
 
     def __repr__(self):
         return f"<AlertEventHistory(fingerprint='{self.fingerprint}', duration='{self.duration}')>"

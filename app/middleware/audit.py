@@ -22,6 +22,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
             "/api/v1/notifications",
             "/api/v1/silence",
             "/api/v1/settings",
+            "/api/v1/projects",  # 项目管理
         ]
         
         # 不记录审计日志的路径
@@ -151,6 +152,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
             "notifications": "notification",
             "silence": "silence",
             "settings": "settings",
+            "projects": "project",  # 项目管理
         }
         
         resource_type = "unknown"

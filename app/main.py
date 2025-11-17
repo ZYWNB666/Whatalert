@@ -12,6 +12,7 @@ from app.db.redis_client import RedisClient
 from app.models.base import Base
 from app.api import auth, alert_rules, datasources, notifications, silence, users, audit
 from app.api import settings as settings_api
+from app.api import projects
 from app.services.evaluator import AlertEvaluationScheduler
 from app.services.alert_manager import AlertManager
 from app.db.database import AsyncSessionLocal
@@ -52,13 +53,14 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
     
     # 创建后台任务专用的数据库会话
-    db_session = AsyncSessionLocal()
+    # db_session = AsyncSessionLocal()  # 不再创建单一会话
     
     # 启动告警评估调度器（不传入会话，让调度器自己管理）
     scheduler = AlertEvaluationScheduler()
     
     # 创建全局告警管理器并启动分组工作器（自动检测使用 Redis 或内存分组器）
-    alert_manager = AlertManager(db_session)
+    # 不再传入会话，让 AlertManager 自己管理会话
+    alert_manager = AlertManager()
     
     # 配置告警分组参数
     alert_manager.configure_grouper(
@@ -81,7 +83,7 @@ async def lifespan(app: FastAPI):
         await scheduler.stop()
     if alert_manager:
         await alert_manager.stop_grouping_worker()
-    await db_session.close()
+    # await db_session.close()  # 不再需要关闭单一会话
     await engine.dispose()
     
     # 关闭 Redis 连接
@@ -119,6 +121,7 @@ app.include_router(silence.router, prefix="/api/v1/silence", tags=["静默规则
 app.include_router(users.router, prefix="/api/v1/users", tags=["用户管理"])
 app.include_router(audit.router, prefix="/api/v1/audit", tags=["审计日志"])
 app.include_router(settings_api.router, prefix="/api/v1/settings", tags=["系统设置"])
+app.include_router(projects.router, prefix="/api/v1/projects", tags=["项目管理"])
 
 
 @app.get("/")

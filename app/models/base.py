@@ -1,7 +1,7 @@
 """基础模型"""
-from datetime import datetime
+import time
 from typing import Any
-from sqlalchemy import Column, Integer, DateTime, String
+from sqlalchemy import Column, Integer
 from sqlalchemy.orm import DeclarativeBase, declared_attr
 
 
@@ -15,8 +15,8 @@ class BaseModel(Base):
     __abstract__ = True
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(Integer, default=lambda: int(time.time()), nullable=False, comment="创建时间戳")
+    updated_at = Column(Integer, default=lambda: int(time.time()), onupdate=lambda: int(time.time()), nullable=False, comment="更新时间戳")
 
     @declared_attr
     def __tablename__(cls) -> str:

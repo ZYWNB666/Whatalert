@@ -1,18 +1,25 @@
 <template>
   <div class="current-alerts">
-    <el-card>
+    <!-- 规则列表视图 -->
+    <el-card v-if="!selectedRule">
       <template #header>
         <div class="card-header">
-          <span>当前告警</span>
+          <div class="header-left">
+            <span>当前告警</span>
+            <el-tag type="info" size="small" style="margin-left: 10px">总计: {{ totalCount }} 条</el-tag>
+          </div>
           <div class="header-actions">
+            <span class="refresh-config">
+              <span class="label">自动刷新:</span>
+              <el-select v-model="refreshInterval" size="small" style="width: 100px" @change="handleRefreshIntervalChange">
+                <el-option label="关闭" :value="0" />
+                <el-option label="5秒" :value="5" />
+                <el-option label="10秒" :value="10" />
+                <el-option label="15秒" :value="15" />
+                <el-option label="30秒" :value="30" />
+              </el-select>
+            </span>
             <span class="last-update-time">上次更新: {{ lastUpdateTime }}</span>
-            <el-switch
-              v-model="groupByRule"
-              active-text="按规则分组"
-              inactive-text="平铺显示"
-              style="margin-left: 10px; margin-right: 10px"
-              @change="handleGroupChange"
-            />
             <el-button @click="loadAlerts" :loading="loading">
               <el-icon><Refresh /></el-icon>
               刷新
@@ -21,72 +28,88 @@
         </div>
       </template>
       
-      <!-- 分组显示模式 -->
-      <div v-if="groupByRule" class="grouped-alerts">
-        <el-collapse v-model="activeGroups">
-          <el-collapse-item
-            v-for="(group, ruleName) in groupedAlerts"
-            :key="ruleName"
-            :name="ruleName"
-          >
-            <template #title>
-              <div class="group-title">
-                <span class="rule-name">{{ ruleName }}</span>
-                <el-badge :value="group.length" class="badge" />
-                <el-tag
-                  :type="getSeverityType(group[0].severity)"
-                  size="small"
-                  style="margin-left: 10px"
-                >
-                  {{ group[0].severity }}
-                </el-tag>
-                <el-tag
-                  :type="getStatusType(group[0].status)"
-                  size="small"
-                  style="margin-left: 5px"
-                >
-                  {{ getStatusText(group[0].status) }}
-                </el-tag>
-              </div>
-            </template>
-            <el-table :data="group" style="width: 100%">
-              <el-table-column prop="value" label="当前值" width="120" />
-              <el-table-column label="标签" min-width="200">
-                <template #default="{ row }">
-                  <el-tag
-                    v-for="(value, key) in getDisplayLabels(row.labels)"
-                    :key="key"
-                    size="small"
-                    style="margin-right: 5px"
-                  >
-                    {{ key }}: {{ value }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="started_at" label="触发时间" width="180">
-                <template #default="{ row }">
-                  {{ formatTime(row.started_at) }}
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="100">
-                <template #default="{ row }">
-                  <el-button link type="primary" size="small" @click="showDetail(row)">
-                    详情
-                  </el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </el-collapse-item>
-        </el-collapse>
+      <!-- 规则卡片列表 -->
+      <div v-loading="loading" class="rule-cards">
+        <el-card
+          v-for="(group, ruleName) in groupedAlerts"
+          :key="ruleName"
+          class="rule-card"
+          shadow="hover"
+          @click="openRuleDetail(ruleName, group)"
+        >
+          <div class="rule-card-content">
+            <div class="rule-header">
+              <span class="rule-name">{{ ruleName }}</span>
+              <el-badge :value="group.length" class="badge" />
+            </div>
+            <div class="rule-info">
+              <el-tag
+                :type="getSeverityType(group[0].severity)"
+                size="small"
+              >
+                {{ group[0].severity }}
+              </el-tag>
+              <el-tag
+                :type="getStatusType(group[0].status)"
+                size="small"
+                style="margin-left: 8px"
+              >
+                {{ getStatusText(group[0].status) }}
+              </el-tag>
+              <span class="rule-time">
+                最新触发: {{ formatTime(group[0].started_at) }}
+              </span>
+            </div>
+          </div>
+        </el-card>
       </div>
+    </el-card>
+    
+    <!-- 规则详情视图 -->
+    <el-card v-else>
+      <template #header>
+        <div class="card-header">
+          <div class="header-left">
+            <el-button text @click="backToList">
+              <el-icon><ArrowLeft /></el-icon>
+              返回
+            </el-button>
+            <span style="margin-left: 15px">{{ selectedRule }}</span>
+            <el-tag type="info" size="small" style="margin-left: 10px">
+              共 {{ ruleAlerts.length }} 条告警
+            </el-tag>
+          </div>
+          <div class="header-actions">
+            <span class="refresh-config">
+              <span class="label">自动刷新:</span>
+              <el-select v-model="refreshInterval" size="small" style="width: 100px" @change="handleRefreshIntervalChange">
+                <el-option label="关闭" :value="0" />
+                <el-option label="5秒" :value="5" />
+                <el-option label="10秒" :value="10" />
+                <el-option label="15秒" :value="15" />
+                <el-option label="30秒" :value="30" />
+              </el-select>
+            </span>
+            <el-button @click="loadAlerts" :loading="loading">
+              <el-icon><Refresh /></el-icon>
+              刷新
+            </el-button>
+          </div>
+        </div>
+      </template>
       
-      <!-- 平铺显示模式 -->
-      <el-table v-else :data="alerts" v-loading="loading" style="width: 100%">
-        <el-table-column prop="rule_name" label="规则名称" min-width="200" />
-        <el-table-column prop="severity" label="等级" width="100">
+      <!-- 规则告警列表 -->
+      <el-table :data="paginatedRuleAlerts" v-loading="loading" style="width: 100%">
+        <el-table-column prop="value" label="当前值" width="120" />
+        <el-table-column label="标签" min-width="250">
           <template #default="{ row }">
-            <el-tag :type="getSeverityType(row.severity)" size="small">
-              {{ row.severity }}
+            <el-tag
+              v-for="(value, key) in getDisplayLabels(row.labels)"
+              :key="key"
+              size="small"
+              style="margin-right: 5px; margin-bottom: 5px"
+            >
+              {{ key }}: {{ value }}
             </el-tag>
           </template>
         </el-table-column>
@@ -97,7 +120,6 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="value" label="当前值" width="120" />
         <el-table-column prop="started_at" label="触发时间" width="180">
           <template #default="{ row }">
             {{ formatTime(row.started_at) }}
@@ -111,6 +133,18 @@
           </template>
         </el-table-column>
       </el-table>
+      
+      <!-- 规则详情分页 -->
+      <el-pagination
+        v-model:current-page="ruleCurrentPage"
+        v-model:page-size="rulePageSize"
+        :page-sizes="[10, 20, 50, 100]"
+        :total="ruleAlerts.length"
+        layout="total, sizes, prev, pager, next, jumper"
+        style="margin-top: 20px; justify-content: flex-end"
+        @size-change="handleRuleSizeChange"
+        @current-change="handleRulePageChange"
+      />
     </el-card>
     
     <el-dialog
@@ -175,17 +209,23 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { getCurrentAlerts } from '@/api/alertRules'
+import { ArrowLeft } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 
 const loading = ref(false)
 const alerts = ref([])
+const totalCount = ref(0)
 const detailVisible = ref(false)
 const currentAlert = ref(null)
-const groupByRule = ref(true)
-const activeGroups = ref([])
 const lastUpdateTime = ref('--')
-const isFirstLoad = ref(true)  // 标记是否首次加载
+const refreshInterval = ref(10)  // 默认10秒
 let refreshTimer = null
+
+// 规则详情相关
+const selectedRule = ref(null)
+const ruleAlerts = ref([])
+const ruleCurrentPage = ref(1)
+const rulePageSize = ref(10)
 
 // 按规则分组
 const groupedAlerts = computed(() => {
@@ -199,32 +239,37 @@ const groupedAlerts = computed(() => {
   return groups
 })
 
-const handleGroupChange = () => {
-  if (groupByRule.value) {
-    // 切换到分组模式时，展开所有分组
-    activeGroups.value = Object.keys(groupedAlerts.value)
-  }
-}
+// 规则详情分页数据
+const paginatedRuleAlerts = computed(() => {
+  const start = (ruleCurrentPage.value - 1) * rulePageSize.value
+  const end = start + rulePageSize.value
+  return ruleAlerts.value.slice(start, end)
+})
 
 const loadAlerts = async () => {
   loading.value = true
   try {
-    // 保存当前展开的分组状态
-    const previousActiveGroups = [...activeGroups.value]
+    // 获取所有数据
+    const params = {
+      limit: 1000,
+      skip: 0
+    }
     
-    alerts.value = await getCurrentAlerts()
+    const result = await getCurrentAlerts(params)
+    console.log('API返回:', result)
     
-    // 只在首次加载时展开所有分组
-    if (groupByRule.value && isFirstLoad.value) {
-      activeGroups.value = Object.keys(groupedAlerts.value)
-      isFirstLoad.value = false
-    } else if (groupByRule.value) {
-      // 刷新时保持之前的展开状态
-      // 如果有新分组出现，可以选择是否自动展开（这里选择不展开）
-      const currentGroups = Object.keys(groupedAlerts.value)
-      activeGroups.value = previousActiveGroups.filter(group => 
-        currentGroups.includes(group)
-      )
+    // 处理返回结果
+    if (Array.isArray(result)) {
+      alerts.value = result
+      totalCount.value = result.length
+    } else {
+      alerts.value = result.alerts || []
+      totalCount.value = result.total || 0
+    }
+    
+    // 如果在规则详情页，更新规则告警数据
+    if (selectedRule.value) {
+      ruleAlerts.value = alerts.value.filter(alert => alert.rule_name === selectedRule.value)
     }
     
     // 更新最后刷新时间
@@ -233,6 +278,39 @@ const loadAlerts = async () => {
     console.error('加载失败:', error)
   } finally {
     loading.value = false
+  }
+}
+
+const openRuleDetail = (ruleName, group) => {
+  selectedRule.value = ruleName
+  ruleAlerts.value = [...group]
+  ruleCurrentPage.value = 1
+}
+
+const backToList = () => {
+  selectedRule.value = null
+  ruleAlerts.value = []
+  ruleCurrentPage.value = 1
+}
+
+const handleRulePageChange = () => {
+  // v-model 会自动更新 ruleCurrentPage
+}
+
+const handleRuleSizeChange = () => {
+  ruleCurrentPage.value = 1
+}
+
+const handleRefreshIntervalChange = () => {
+  // 清除旧定时器
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+  
+  // 设置新定时器
+  if (refreshInterval.value > 0) {
+    refreshTimer = setInterval(loadAlerts, refreshInterval.value * 1000)
   }
 }
 
@@ -280,8 +358,10 @@ const showDetail = (row) => {
 
 onMounted(() => {
   loadAlerts()
-  // 每10秒自动刷新，提升实时性
-  refreshTimer = setInterval(loadAlerts, 10000)
+  // 根据默认刷新间隔设置定时器
+  if (refreshInterval.value > 0) {
+    refreshTimer = setInterval(loadAlerts, refreshInterval.value * 1000)
+  }
 })
 
 onUnmounted(() => {
@@ -298,41 +378,80 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   
+  .header-left {
+    display: flex;
+    align-items: center;
+  }
+  
   .header-actions {
     display: flex;
     align-items: center;
-  }
-  
-  .last-update-time {
-    color: #909399;
-    font-size: 14px;
+    gap: 15px;
+    
+    .refresh-config {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      
+      .label {
+        font-size: 14px;
+        color: #606266;
+      }
+    }
+    
+    .last-update-time {
+      font-size: 12px;
+      color: #909399;
+    }
   }
 }
 
-.grouped-alerts {
-  .group-title {
-    display: flex;
-    align-items: center;
-    flex: 1;
+.rule-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  gap: 15px;
+  
+  .rule-card {
+    cursor: pointer;
+    transition: transform 0.2s;
     
-    .rule-name {
-      font-weight: 500;
-      margin-right: 10px;
+    &:hover {
+      transform: translateY(-2px);
     }
     
-    .badge {
-      margin-left: auto;
-      margin-right: 10px;
+    .rule-card-content {
+      .rule-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+        
+        .rule-name {
+          font-size: 16px;
+          font-weight: 600;
+          color: #303133;
+        }
+        
+        .badge {
+          :deep(.el-badge__content) {
+            font-size: 14px;
+          }
+        }
+      }
+      
+      .rule-info {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        
+        .rule-time {
+          font-size: 12px;
+          color: #909399;
+          margin-left: auto;
+        }
+      }
     }
-  }
-  
-  :deep(.el-collapse-item__header) {
-    height: auto;
-    padding: 10px 0;
-  }
-  
-  :deep(.el-collapse-item__content) {
-    padding-bottom: 15px;
   }
 }
 </style>

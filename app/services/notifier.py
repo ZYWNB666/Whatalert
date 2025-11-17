@@ -1,6 +1,7 @@
 """通知服务"""
 import time
 import json
+import re
 import httpx
 import aiosmtplib
 from email.mime.text import MIMEText
@@ -17,8 +18,60 @@ from app.models.settings import SystemSettings
 class NotificationService:
     """通知服务"""
     
-    def __init__(self, db: AsyncSession):
-        self.db = db
+    def __init__(self):
+        from app.db.database import AsyncSessionLocal
+        self.SessionLocal = AsyncSessionLocal
+    
+    @staticmethod
+    def render_template(template: str, alert: AlertEvent) -> str:
+        """渲染模板变量
+        
+        支持的变量格式：
+        - {{ $labels.xxx }} 或 {{$labels.xxx}}
+        - {{ $value }} 或 {{$value}}
+        - {{ .labels.xxx }} 或 {{.labels.xxx}}
+        - {{ .value }} 或 {{.value}}
+        """
+        if not template:
+            return template
+        
+        result = template
+        
+        # 渲染 $value 或 .value
+        value_patterns = [
+            r'\{\{\s*\$value\s*\}\}',
+            r'\{\{\s*\.value\s*\}\}'
+        ]
+        for pattern in value_patterns:
+            result = re.sub(pattern, str(alert.value), result)
+        
+        # 渲染 $labels.xxx 或 .labels.xxx
+        label_patterns = [
+            r'\{\{\s*\$labels\.(\w+)\s*\}\}',
+            r'\{\{\s*\.labels\.(\w+)\s*\}\}'
+        ]
+        for pattern in label_patterns:
+            def replace_label(match):
+                label_key = match.group(1)
+                return str(alert.labels.get(label_key, f'<未定义:{label_key}>'))
+            result = re.sub(pattern, replace_label, result)
+        
+        return result
+    
+    @staticmethod
+    def render_annotations(alert: AlertEvent) -> Dict[str, str]:
+        """渲染告警注释中的所有模板变量"""
+        if not alert.annotations:
+            return {}
+        
+        rendered = {}
+        for key, value in alert.annotations.items():
+            if isinstance(value, str):
+                rendered[key] = NotificationService.render_template(value, alert)
+            else:
+                rendered[key] = value
+        
+        return rendered
     
     async def send_notification(self, alert: AlertEvent, rule: AlertRule, is_recovery: bool = False):
         """发送单个告警通知（向后兼容）"""
@@ -54,33 +107,35 @@ class NotificationService:
         rule: AlertRule
     ) -> List[NotificationChannel]:
         """获取通知渠道（支持路由）"""
-        # 从规则路由配置中获取渠道ID列表
-        channel_ids = rule.route_config.get('notification_channels', [])
-        
-        if not channel_ids:
-            # 如果没有配置，使用默认渠道
-            stmt = select(NotificationChannel).where(
-                NotificationChannel.tenant_id == alert.tenant_id,
-                NotificationChannel.is_enabled == True,
-                NotificationChannel.is_default == True
-            )
-        else:
-            stmt = select(NotificationChannel).where(
-                NotificationChannel.id.in_(channel_ids),
-                NotificationChannel.tenant_id == alert.tenant_id,
-                NotificationChannel.is_enabled == True
-            )
-        
-        result = await self.db.execute(stmt)
-        channels = result.scalars().all()
-        
-        # 过滤标签
-        filtered_channels = []
-        for channel in channels:
-            if self.should_send_to_channel(alert, channel):
-                filtered_channels.append(channel)
-        
-        return filtered_channels
+        # 使用独立的数据库会话
+        async with self.SessionLocal() as db:
+            # 从规则路由配置中获取渠道ID列表
+            channel_ids = rule.route_config.get('notification_channels', [])
+            
+            if not channel_ids:
+                # 如果没有配置，使用默认渠道
+                stmt = select(NotificationChannel).where(
+                    NotificationChannel.tenant_id == alert.tenant_id,
+                    NotificationChannel.is_enabled == True,
+                    NotificationChannel.is_default == True
+                )
+            else:
+                stmt = select(NotificationChannel).where(
+                    NotificationChannel.id.in_(channel_ids),
+                    NotificationChannel.tenant_id == alert.tenant_id,
+                    NotificationChannel.is_enabled == True
+                )
+            
+            result = await db.execute(stmt)
+            channels = result.scalars().all()
+            
+            # 过滤标签
+            filtered_channels = []
+            for channel in channels:
+                if self.should_send_to_channel(alert, channel):
+                    filtered_channels.append(channel)
+            
+            return filtered_channels
     
     @staticmethod
     def should_send_to_channel(alert: AlertEvent, channel: NotificationChannel) -> bool:
@@ -177,8 +232,23 @@ class NotificationService:
         status_color = "red" if not is_recovery else "green"
         status_text = "告警触发" if not is_recovery else "告警恢复"
         
+        # 渲染注释
+        rendered_annotations = NotificationService.render_annotations(alert)
+        
         # 构建标签列表
         labels_text = "\n".join([f"**{k}**: {v}" for k, v in alert.labels.items()])
+        
+        # 基础信息
+        basic_info = f"**告警名称**: {alert.rule_name}\n**告警等级**: {alert.severity}\n**当前值**: {alert.value}"
+        
+        # 添加注释信息
+        if rendered_annotations:
+            summary = rendered_annotations.get('summary', '')
+            description = rendered_annotations.get('description', '')
+            if summary:
+                basic_info += f"\n\n**摘要**: {summary}"
+            if description:
+                basic_info += f"\n**描述**: {description}"
         
         card = {
             "msg_type": "interactive",
@@ -197,7 +267,7 @@ class NotificationService:
                     {
                         "tag": "div",
                         "text": {
-                            "content": f"**告警名称**: {alert.rule_name}\n**告警等级**: {alert.severity}\n**当前值**: {alert.value}",
+                            "content": basic_info,
                             "tag": "lark_md"
                         }
                     },
@@ -270,15 +340,17 @@ class NotificationService:
         """发送邮件通知"""
         from app.models.settings import SystemSettings
         
-        # 从数据库获取 SMTP 配置
-        stmt = select(SystemSettings).where(SystemSettings.key == 'smtp_config')
-        result = await self.db.execute(stmt)
-        smtp_settings = result.scalar_one_or_none()
-        
-        if not smtp_settings:
-            raise Exception("SMTP 未配置，请在系统设置中配置邮件服务器")
-        
-        smtp_config = smtp_settings.value
+        # 使用独立的数据库会话
+        async with self.SessionLocal() as db:
+            # 从数据库获取 SMTP 配置
+            stmt = select(SystemSettings).where(SystemSettings.key == 'smtp_config')
+            result = await db.execute(stmt)
+            smtp_settings = result.scalar_one_or_none()
+            
+            if not smtp_settings:
+                raise Exception("SMTP 未配置，请在系统设置中配置邮件服务器")
+            
+            smtp_config = smtp_settings.value
         
         to_addresses = channel.config.get('to', [])
         cc_addresses = channel.config.get('cc', [])
@@ -321,6 +393,9 @@ class NotificationService:
         if not webhook_url:
             raise Exception("Webhook URL 未配置")
         
+        # 渲染注释中的模板变量
+        rendered_annotations = self.render_annotations(alert)
+        
         # 构建请求体
         if body_template == 'default':
             # 默认格式：标准 JSON
@@ -335,7 +410,7 @@ class NotificationService:
                     "value": alert.value,
                     "started_at": alert.started_at,
                     "labels": alert.labels,
-                    "annotations": alert.annotations,
+                    "annotations": rendered_annotations,
                     "expr": alert.expr
                 },
                 "is_recovery": is_recovery
@@ -386,11 +461,22 @@ class NotificationService:
         status = "【恢复】" if is_recovery else "【告警】"
         labels_text = "\n".join([f"{k}: {v}" for k, v in alert.labels.items()])
         
+        # 渲染注释
+        rendered_annotations = NotificationService.render_annotations(alert)
+        annotations_text = ""
+        if rendered_annotations:
+            summary = rendered_annotations.get('summary', '')
+            description = rendered_annotations.get('description', '')
+            if summary:
+                annotations_text += f"\n摘要: {summary}"
+            if description:
+                annotations_text += f"\n描述: {description}"
+        
         text = f"""{status}
 告警名称: {alert.rule_name}
 告警等级: {alert.severity}
 当前值: {alert.value}
-触发时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(alert.started_at))}
+触发时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(alert.started_at))}{annotations_text}
 
 标签:
 {labels_text}
@@ -403,7 +489,23 @@ class NotificationService:
         status = "告警恢复" if is_recovery else "告警触发"
         status_color = "#28a745" if is_recovery else "#dc3545"
         
+        # 渲染注释
+        rendered_annotations = NotificationService.render_annotations(alert)
+        
         labels_html = "".join([f"<tr><td><strong>{k}</strong></td><td>{v}</td></tr>" for k, v in alert.labels.items()])
+        
+        # 构建注释部分
+        annotations_html = ""
+        if rendered_annotations:
+            summary = rendered_annotations.get('summary', '')
+            description = rendered_annotations.get('description', '')
+            if summary or description:
+                annotations_html = "<h3>告警信息</h3><table>"
+                if summary:
+                    annotations_html += f"<tr><td><strong>摘要</strong></td><td>{summary}</td></tr>"
+                if description:
+                    annotations_html += f"<tr><td><strong>描述</strong></td><td>{description}</td></tr>"
+                annotations_html += "</table>"
         
         html = f"""
         <html>
@@ -412,7 +514,7 @@ class NotificationService:
                 body {{ font-family: Arial, sans-serif; }}
                 .header {{ background-color: {status_color}; color: white; padding: 20px; text-align: center; }}
                 .content {{ padding: 20px; }}
-                table {{ border-collapse: collapse; width: 100%; }}
+                table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
                 td {{ padding: 8px; border-bottom: 1px solid #ddd; }}
             </style>
         </head>
@@ -427,6 +529,7 @@ class NotificationService:
                     <tr><td><strong>当前值</strong></td><td>{alert.value}</td></tr>
                     <tr><td><strong>触发时间</strong></td><td>{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(alert.started_at))}</td></tr>
                 </table>
+                {annotations_html}
                 <h3>标签</h3>
                 <table>
                     {labels_html}
@@ -475,8 +578,10 @@ class NotificationService:
             tenant_id=alert.tenant_id
         )
         
-        self.db.add(record)
-        await self.db.commit()
+        # 使用独立的数据库会话保存记录
+        async with self.SessionLocal() as db:
+            db.add(record)
+            await db.commit()
     
     # ===== 批量告警发送方法 =====
     
@@ -636,15 +741,17 @@ class NotificationService:
             await self.send_email(channel, alerts[0], is_recovery)
             return
         
-        # 从数据库获取 SMTP 配置
-        stmt = select(SystemSettings).where(SystemSettings.key == 'smtp_config')
-        result = await self.db.execute(stmt)
-        smtp_settings = result.scalar_one_or_none()
-        
-        if not smtp_settings:
-            raise Exception("SMTP 未配置，请在系统设置中配置邮件服务器")
-        
-        smtp_config = smtp_settings.value
+        # 使用独立的数据库会话
+        async with self.SessionLocal() as db:
+            # 从数据库获取 SMTP 配置
+            stmt = select(SystemSettings).where(SystemSettings.key == 'smtp_config')
+            result = await db.execute(stmt)
+            smtp_settings = result.scalar_one_or_none()
+            
+            if not smtp_settings:
+                raise Exception("SMTP 未配置，请在系统设置中配置邮件服务器")
+            
+            smtp_config = smtp_settings.value
         
         to_addresses = channel.config.get('to', [])
         cc_addresses = channel.config.get('cc', [])
@@ -701,7 +808,7 @@ class NotificationService:
                         "fingerprint": alert.fingerprint,
                         "status": alert.status,
                         "labels": alert.labels,
-                        "annotations": alert.annotations,
+                        "annotations": self.render_annotations(alert),  # 渲染模板变量
                         "startsAt": alert.started_at,
                         "value": alert.value
                     }

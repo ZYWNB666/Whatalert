@@ -61,3 +61,12 @@ export const getAlertHistory = (params) => {
   })
 }
 
+// 测试告警规则
+export const testAlertRule = (data) => {
+  return request({
+    url: '/alert-rules/test',
+    method: 'post',
+    data
+  })
+}
+

@@ -13,6 +13,7 @@ class NotificationChannelBase(BaseModel):
     filter_config: Dict[str, Any] = Field(default_factory=dict, description="过滤配置")
     is_enabled: bool = Field(True, description="是否启用")
     is_default: bool = Field(False, description="是否默认渠道")
+    project_id: Optional[int] = Field(None, description="项目ID")
 
 
 class NotificationChannelCreate(NotificationChannelBase):
@@ -35,6 +36,7 @@ class NotificationChannelResponse(NotificationChannelBase):
     """通知渠道响应"""
     id: int
     tenant_id: int
+    project_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 

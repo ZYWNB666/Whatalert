@@ -31,11 +31,13 @@ class NotificationChannel(BaseModel):
     is_enabled = Column(Boolean, default=True, nullable=False, comment="是否启用")
     is_default = Column(Boolean, default=False, comment="是否默认渠道")
     
-    # 多租户
+    # 多租户和项目
     tenant_id = Column(Integer, ForeignKey('tenant.id', ondelete='CASCADE'), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey('project.id', ondelete='CASCADE'), nullable=True, index=True, comment="项目ID")
     
     # 关系
     tenant = relationship("Tenant", back_populates="notification_channels")
+    project = relationship("Project", back_populates="notification_channels")
     records = relationship("NotificationRecord", back_populates="channel", cascade="all, delete-orphan")
 
     def __repr__(self):

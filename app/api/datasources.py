@@ -1,7 +1,7 @@
 """数据源 API"""
 from typing import List
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from app.db.database import get_db
@@ -20,10 +20,11 @@ async def create_datasource(
     db: AsyncSession = Depends(get_db)
 ):
     """创建数据源"""
-    # 检查名称是否已存在
+    # 检查名称是否已存在(同一项目内)
     stmt = select(DataSource).where(
         and_(
             DataSource.tenant_id == current_user.tenant_id,
+            DataSource.project_id == datasource_data.project_id,
             DataSource.name == datasource_data.name
         )
     )
@@ -45,11 +46,16 @@ async def create_datasource(
 
 @router.get("/", response_model=List[DataSourceResponse])
 async def list_datasources(
+    project_id: int = Query(None, description="项目ID,不传则显示所有项目"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取数据源列表"""
-    stmt = select(DataSource).where(DataSource.tenant_id == current_user.tenant_id)
+    """获取数据源列表(按项目隔离)"""
+    conditions = [DataSource.tenant_id == current_user.tenant_id]
+    if project_id is not None:
+        conditions.append(DataSource.project_id == project_id)
+    
+    stmt = select(DataSource).where(and_(*conditions))
     result = await db.execute(stmt)
     datasources = result.scalars().all()
     
@@ -59,16 +65,19 @@ async def list_datasources(
 @router.get("/{datasource_id}", response_model=DataSourceResponse)
 async def get_datasource(
     datasource_id: int,
+    project_id: int = Query(None, description="项目ID,不传则不校验项目"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """获取数据源详情"""
-    stmt = select(DataSource).where(
-        and_(
-            DataSource.id == datasource_id,
-            DataSource.tenant_id == current_user.tenant_id
-        )
-    )
+    conditions = [
+        DataSource.id == datasource_id,
+        DataSource.tenant_id == current_user.tenant_id
+    ]
+    if project_id is not None:
+        conditions.append(DataSource.project_id == project_id)
+    
+    stmt = select(DataSource).where(and_(*conditions))
     result = await db.execute(stmt)
     datasource = result.scalar_one_or_none()
     
@@ -82,16 +91,19 @@ async def get_datasource(
 async def update_datasource(
     datasource_id: int,
     datasource_data: DataSourceUpdate,
+    project_id: int = Query(None, description="项目ID,不传则不校验项目"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """更新数据源"""
-    stmt = select(DataSource).where(
-        and_(
-            DataSource.id == datasource_id,
-            DataSource.tenant_id == current_user.tenant_id
-        )
-    )
+    conditions = [
+        DataSource.id == datasource_id,
+        DataSource.tenant_id == current_user.tenant_id
+    ]
+    if project_id is not None:
+        conditions.append(DataSource.project_id == project_id)
+    
+    stmt = select(DataSource).where(and_(*conditions))
     result = await db.execute(stmt)
     datasource = result.scalar_one_or_none()
     
@@ -110,16 +122,19 @@ async def update_datasource(
 @router.delete("/{datasource_id}")
 async def delete_datasource(
     datasource_id: int,
+    project_id: int = Query(None, description="项目ID,不传则不校验项目"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """删除数据源"""
-    stmt = select(DataSource).where(
-        and_(
-            DataSource.id == datasource_id,
-            DataSource.tenant_id == current_user.tenant_id
-        )
-    )
+    conditions = [
+        DataSource.id == datasource_id,
+        DataSource.tenant_id == current_user.tenant_id
+    ]
+    if project_id is not None:
+        conditions.append(DataSource.project_id == project_id)
+    
+    stmt = select(DataSource).where(and_(*conditions))
     result = await db.execute(stmt)
     datasource = result.scalar_one_or_none()
     
@@ -135,16 +150,19 @@ async def delete_datasource(
 @router.post("/{datasource_id}/test")
 async def test_datasource(
     datasource_id: int,
+    project_id: int = Query(None, description="项目ID,不传则不校验项目"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """测试数据源连接"""
-    stmt = select(DataSource).where(
-        and_(
-            DataSource.id == datasource_id,
-            DataSource.tenant_id == current_user.tenant_id
-        )
-    )
+    conditions = [
+        DataSource.id == datasource_id,
+        DataSource.tenant_id == current_user.tenant_id
+    ]
+    if project_id is not None:
+        conditions.append(DataSource.project_id == project_id)
+    
+    stmt = select(DataSource).where(and_(*conditions))
     result = await db.execute(stmt)
     datasource = result.scalar_one_or_none()
     
@@ -169,14 +187,9 @@ async def test_datasource(
         # 构建查询 URL
         base_url = datasource.url.rstrip('/')
         
-        # 自动添加 /api/v1/query 路径
-        # 对于 Prometheus: http://prometheus:9090 -> http://prometheus:9090/api/v1/query
-        # 对于 VictoriaMetrics 多租户: http://vm:8428/select/0/prometheus -> http://vm:8428/select/0/prometheus/api/v1/query
+        # 统一添加 /api/v1/query 路径
         if base_url.endswith('/api/v1'):
             query_url = f"{base_url}/query"
-        elif '/api/v1/' in base_url:
-            # 已经包含完整路径
-            query_url = base_url
         else:
             query_url = f"{base_url}/api/v1/query"
         

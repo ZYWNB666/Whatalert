@@ -2,6 +2,7 @@
 from sqlalchemy import Column, String, Boolean, Integer, ForeignKey, Table, Text
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
+from app.models.project import project_user
 
 
 # 用户-角色关联表
@@ -39,6 +40,7 @@ class User(BaseModel):
     # 关系
     tenant = relationship("Tenant", back_populates="users")
     roles = relationship("Role", secondary=user_roles, back_populates="users")
+    projects = relationship("Project", secondary=project_user, back_populates="users")
 
     def __repr__(self):
         return f"<User(username='{self.username}', email='{self.email}')>"

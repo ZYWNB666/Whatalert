@@ -1,6 +1,5 @@
 """告警相关 Schema"""
 from typing import Dict, Any, Optional
-from datetime import datetime
 from pydantic import BaseModel, Field
 
 
@@ -11,6 +10,7 @@ class AlertRuleBase(BaseModel):
     expr: str = Field(..., description="PromQL表达式")
     eval_interval: int = Field(60, description="评估间隔(秒)")
     for_duration: int = Field(60, description="持续时间(秒)")
+    repeat_interval: int = Field(1800, description="重复发送间隔(秒)")
     severity: str = Field("warning", description="告警等级")
     labels: Dict[str, Any] = Field(default_factory=dict, description="标签")
     annotations: Dict[str, str] = Field(default_factory=dict, description="注释")
@@ -21,7 +21,7 @@ class AlertRuleBase(BaseModel):
 
 class AlertRuleCreate(AlertRuleBase):
     """创建告警规则"""
-    pass
+    project_id: int = Field(..., description="项目ID")
 
 
 class AlertRuleUpdate(AlertRuleBase):
@@ -35,8 +35,9 @@ class AlertRuleResponse(AlertRuleBase):
     """告警规则响应"""
     id: int
     tenant_id: int
-    created_at: datetime
-    updated_at: datetime
+    project_id: int
+    created_at: int
+    updated_at: int
 
     class Config:
         from_attributes = True

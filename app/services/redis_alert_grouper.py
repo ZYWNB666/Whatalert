@@ -51,8 +51,12 @@ class RedisAlertGrouper:
         
         返回: group_key
         """
+        logger.info(f"🔴 RedisAlertGrouper.add_alert 被调用: fingerprint={alert.fingerprint[:16]}, rule={rule.name}")
+        
         group_key, group_labels = self._generate_group_key(alert, rule)
         redis_key = self._get_group_key(group_key, is_recovery=False)
+        
+        logger.info(f"🔑 Redis键: {redis_key}")
         
         # 获取现有分组数据
         group_data = await self.redis.get(redis_key)

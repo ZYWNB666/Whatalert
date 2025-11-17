@@ -37,8 +37,9 @@ class AlertGroup:
 class AlertGrouper:
     """告警分组器"""
     
-    def __init__(self, db: AsyncSession):
-        self.db = db
+    def __init__(self):
+        from app.db.database import AsyncSessionLocal
+        self.SessionLocal = AsyncSessionLocal
         self.groups: Dict[str, AlertGroup] = {}  # firing 告警分组
         self.recovery_groups: Dict[str, AlertGroup] = {}  # resolved 告警分组
         self.group_wait = 10  # 分组等待时间（秒）
@@ -169,9 +170,14 @@ class AlertGrouper:
         
         # 检查是否已发送
         if group.sent:
+            # 使用规则中配置的重复发送间隔
+            repeat_interval = self.repeat_interval
+            if hasattr(group, 'rule') and group.rule:
+                repeat_interval = group.rule.repeat_interval
+            
             # 检查是否需要重复发送
-            if (current_time - group.last_updated_at) >= self.repeat_interval:
-                logger.debug(f"分组达到重复发送间隔: {group.group_key}")
+            if (current_time - group.last_updated_at) >= repeat_interval:
+                logger.debug(f"分组达到重复发送间隔({repeat_interval}s): {group.group_key}")
                 return True
             return False
         

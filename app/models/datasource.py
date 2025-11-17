@@ -27,11 +27,13 @@ class DataSource(BaseModel):
     # 额外标签（会附加到所有查询结果）
     extra_labels = Column(JSON, default={}, comment="额外标签")
     
-    # 多租户
+    # 多租户和项目
     tenant_id = Column(Integer, ForeignKey('tenant.id', ondelete='CASCADE'), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey('project.id', ondelete='CASCADE'), nullable=True, index=True, comment="项目ID")
     
     # 关系
     tenant = relationship("Tenant", back_populates="datasources")
+    project = relationship("Project", back_populates="datasources")
     alert_rules = relationship("AlertRule", back_populates="datasource")
 
     def __repr__(self):

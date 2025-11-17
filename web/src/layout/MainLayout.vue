@@ -32,6 +32,36 @@
           </el-breadcrumb>
         </div>
         <div class="header-right">
+          <!-- 项目切换器 -->
+          <el-dropdown @command="handleProjectChange" class="project-dropdown">
+            <div class="project-selector">
+              <el-icon><Folder /></el-icon>
+              <span>{{ currentProjectName }}</span>
+              <el-icon class="arrow"><ArrowDown /></el-icon>
+            </div>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item 
+                  v-for="project in userStore.projects" 
+                  :key="project.id"
+                  :command="project"
+                  :class="{ 'is-active': project.id === userStore.currentProject?.id }"
+                >
+                  <el-icon v-if="project.is_default"><Star /></el-icon>
+                  <span>{{ project.name }}</span>
+                  <el-icon v-if="project.id === userStore.currentProject?.id" class="check-icon">
+                    <Check />
+                  </el-icon>
+                </el-dropdown-item>
+                <el-dropdown-item divided @click="handleManageProjects">
+                  <el-icon><Setting /></el-icon>
+                  管理项目
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+
+          <!-- 用户菜单 -->
           <el-dropdown>
             <div class="user-info">
               <el-icon><User /></el-icon>
@@ -69,10 +99,18 @@ import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { onMounted } from 'vue'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+
+// 组件挂载后加载项目列表
+onMounted(async () => {
+  if (userStore.token && !userStore.projects.length) {
+    await userStore.fetchProjects()
+  }
+})
 
 const menuRoutes = computed(() => {
   const allRoutes = router.getRoutes()
@@ -81,6 +119,11 @@ const menuRoutes = computed(() => {
   
   // 根据用户权限过滤菜单
   return allRoutes.filter(route => {
+    // 检查是否需要超级管理员权限
+    if (route.meta?.requireSuperuser) {
+      return userStore.isSuperuser
+    }
+    
     // 没有权限要求的路由，所有人都可以访问
     if (!route.meta?.permission) return true
     
@@ -96,6 +139,21 @@ const activeMenu = computed(() => {
 const currentTitle = computed(() => {
   return route.meta?.title || '概览'
 })
+
+const currentProjectName = computed(() => {
+  return userStore.currentProject?.name || '选择项目'
+})
+
+const handleProjectChange = (project) => {
+  userStore.setCurrentProject(project)
+  ElMessage.success(`已切换到项目：${project.name}`)
+  // 刷新当前页面数据
+  window.location.reload()
+}
+
+const handleManageProjects = () => {
+  router.push('/projects')
+}
 
 const handleProfile = () => {
   router.push('/profile')
@@ -177,6 +235,34 @@ const handleLogout = async () => {
   }
   
   .header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    
+    .project-dropdown {
+      .project-selector {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        padding: 6px 12px;
+        border-radius: 4px;
+        border: 1px solid #d9d9d9;
+        background: #fff;
+        transition: all 0.3s;
+        
+        &:hover {
+          border-color: #1890ff;
+          color: #1890ff;
+        }
+        
+        .arrow {
+          font-size: 12px;
+          transition: transform 0.3s;
+        }
+      }
+    }
+    
     .user-info {
       display: flex;
       align-items: center;
@@ -189,6 +275,18 @@ const handleLogout = async () => {
         background: #f5f7fa;
       }
     }
+  }
+}
+
+:deep(.el-dropdown-menu__item) {
+  &.is-active {
+    background: #e6f7ff;
+    color: #1890ff;
+  }
+  
+  .check-icon {
+    margin-left: auto;
+    color: #52c41a;
   }
 }
 

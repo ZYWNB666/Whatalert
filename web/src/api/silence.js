@@ -17,6 +17,15 @@ export const createSilenceRule = (data) => {
   })
 }
 
+// 更新静默规则
+export const updateSilenceRule = (id, data) => {
+  return request({
+    url: `/silence/${id}`,
+    method: 'put',
+    data
+  })
+}
+
 // 删除静默规则
 export const deleteSilenceRule = (id) => {
   return request({
@@ -25,3 +34,11 @@ export const deleteSilenceRule = (id) => {
   })
 }
 
+// 获取被静默的告警列表
+export const getSilencedAlerts = (ruleId, params = {}) => {
+  return request({
+    url: `/silence/${ruleId}/silenced-alerts`,
+    method: 'get',
+    params
+  })
+}

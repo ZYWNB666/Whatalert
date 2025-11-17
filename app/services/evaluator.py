@@ -8,7 +8,7 @@ from datetime import datetime
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.models.alert import AlertRule, AlertEvent
+from app.models.alert import AlertRule, AlertEvent, AlertEventHistory
 from app.models.datasource import DataSource
 from app.services.alert_manager import AlertManager
 
@@ -43,12 +43,14 @@ class RuleEvaluator:
             
             # 构建查询 URL
             base_url = datasource.url.rstrip('/')
+            
+            # 统一添加 /api/v1/query 路径
             if base_url.endswith('/api/v1'):
                 query_url = f"{base_url}/query"
-            elif '/api/v1/' in base_url:
-                query_url = base_url
             else:
                 query_url = f"{base_url}/api/v1/query"
+            
+            logger.info(f"查询数据源: url={query_url}, query={query}")
             
             # 发送查询
             verify_ssl = datasource.http_config.get('verify_ssl', True)
@@ -130,6 +132,7 @@ class RuleEvaluator:
                     'annotations': self.render_annotations(rule.annotations, all_labels, value),
                     'expr': rule.expr,
                     'tenant_id': rule.tenant_id,
+                    'project_id': rule.project_id,
                     'status': 'pending',  # 初始状态
                     'started_at': current_time,
                     'last_eval_at': current_time,
@@ -216,6 +219,9 @@ class RuleEvaluator:
                         if alert.status in ['pending', 'firing']}
         resolved_fingerprints = set(active_alerts.keys()) - current_fingerprints
         
+        # 准备归档的告警列表
+        alerts_to_archive = []
+        
         for fingerprint in resolved_fingerprints:
             alert = active_alerts[fingerprint]
             alert.status = 'resolved'
@@ -224,10 +230,44 @@ class RuleEvaluator:
             # 发送恢复通知
             await self.alert_manager.send_recovery(alert, rule)
             
-            # 移动到历史记录
-            await self.alert_manager.archive_alert(alert)
+            # 记录需要归档的告警
+            alerts_to_archive.append(alert)
         
+        # 提交所有更改
         await self.db.commit()
+        
+        # 归档已恢复的告警（在 commit 之后，在当前会话中直接处理）
+        for alert in alerts_to_archive:
+            try:
+                # 创建历史记录
+                history = AlertEventHistory(
+                    fingerprint=alert.fingerprint,
+                    rule_id=alert.rule_id,
+                    rule_name=alert.rule_name,
+                    status=alert.status,
+                    severity=alert.severity,
+                    started_at=alert.started_at,
+                    resolved_at=current_time,
+                    duration=current_time - alert.started_at,
+                    value=alert.value,
+                    labels=alert.labels,
+                    annotations=alert.annotations,
+                    expr=alert.expr,
+                    tenant_id=alert.tenant_id,
+                    project_id=alert.project_id
+                )
+                
+                self.db.add(history)
+                
+                # 删除当前告警
+                await self.db.delete(alert)
+                
+            except Exception as e:
+                logger.error(f"归档告警失败: fingerprint={alert.fingerprint}, error={str(e)}")
+        
+        # 提交归档操作
+        if alerts_to_archive:
+            await self.db.commit()
 
 
 class AlertEvaluationScheduler:
@@ -288,7 +328,7 @@ class AlertEvaluationScheduler:
                     alert_manager = main_module.alert_manager
                 else:
                     # 如果全局 alert_manager 未初始化，创建临时的
-                    alert_manager = AlertManager(db)
+                    alert_manager = AlertManager()
                     logger.warning("全局 alert_manager 未初始化，使用临时实例")
                 
                 evaluator = RuleEvaluator(db, alert_manager)

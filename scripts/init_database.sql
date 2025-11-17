@@ -146,11 +146,14 @@ CREATE TABLE `datasource` (
   `is_enabled` BOOLEAN DEFAULT TRUE COMMENT '是否启用',
   `is_default` BOOLEAN DEFAULT FALSE COMMENT '是否默认',
   `tenant_id` INT NOT NULL COMMENT '租户ID',
+  `project_id` INT COMMENT '项目ID',
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   INDEX `idx_datasource_tenant_id` (`tenant_id`),
+  INDEX `idx_datasource_project_id` (`project_id`),
   INDEX `idx_datasource_type` (`type`),
-  FOREIGN KEY (`tenant_id`) REFERENCES `tenant`(`id`) ON DELETE CASCADE
+  FOREIGN KEY (`tenant_id`) REFERENCES `tenant`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据源表';
 
 -- ============================================================================
@@ -165,6 +168,7 @@ CREATE TABLE `alert_rule` (
   `expr` TEXT NOT NULL COMMENT 'PromQL表达式',
   `severity` VARCHAR(20) NOT NULL DEFAULT 'warning' COMMENT '严重程度',
   `for_duration` INT DEFAULT 60 COMMENT '持续时间(秒)',
+  `repeat_interval` INT NOT NULL DEFAULT 1800 COMMENT '重复发送间隔(秒)',
   `eval_interval` INT DEFAULT 60 COMMENT '评估间隔(秒)',
   `labels` JSON COMMENT '标签',
   `annotations` JSON COMMENT '注释',
@@ -173,12 +177,15 @@ CREATE TABLE `alert_rule` (
   `is_enabled` BOOLEAN DEFAULT TRUE COMMENT '是否启用',
   `datasource_id` INT NOT NULL COMMENT '数据源ID',
   `tenant_id` INT NOT NULL COMMENT '租户ID',
+  `project_id` INT COMMENT '项目ID',
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   INDEX `idx_alert_rule_tenant_id` (`tenant_id`),
+  INDEX `idx_alert_rule_project_id` (`project_id`),
   INDEX `idx_alert_rule_datasource_id` (`datasource_id`),
   INDEX `idx_alert_rule_is_enabled` (`is_enabled`),
   FOREIGN KEY (`tenant_id`) REFERENCES `tenant`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`datasource_id`) REFERENCES `datasource`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='告警规则表';
 
@@ -261,11 +268,14 @@ CREATE TABLE `notification_channel` (
   `is_enabled` BOOLEAN DEFAULT TRUE COMMENT '是否启用',
   `is_default` BOOLEAN DEFAULT FALSE COMMENT '是否默认',
   `tenant_id` INT NOT NULL COMMENT '租户ID',
+  `project_id` INT COMMENT '项目ID',
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   INDEX `idx_notification_channel_tenant_id` (`tenant_id`),
+  INDEX `idx_notification_channel_project_id` (`project_id`),
   INDEX `idx_notification_channel_type` (`type`),
-  FOREIGN KEY (`tenant_id`) REFERENCES `tenant`(`id`) ON DELETE CASCADE
+  FOREIGN KEY (`tenant_id`) REFERENCES `tenant`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='通知渠道表';
 
 -- 4.2 通知记录表
@@ -309,12 +319,15 @@ CREATE TABLE `silence_rule` (
   `created_by` VARCHAR(100) COMMENT '创建者',
   `comment` TEXT COMMENT '备注',
   `tenant_id` INT NOT NULL COMMENT '租户ID',
+  `project_id` INT COMMENT '项目ID',
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   INDEX `idx_silence_rule_tenant_id` (`tenant_id`),
+  INDEX `idx_silence_rule_project_id` (`project_id`),
   INDEX `idx_silence_rule_is_enabled` (`is_enabled`),
   INDEX `idx_silence_rule_time` (`starts_at`, `ends_at`),
-  FOREIGN KEY (`tenant_id`) REFERENCES `tenant`(`id`) ON DELETE CASCADE
+  FOREIGN KEY (`tenant_id`) REFERENCES `tenant`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='静默规则';
 
 -- 5.2 系统设置表
@@ -362,6 +375,41 @@ CREATE TABLE `audit_log` (
   FOREIGN KEY (`tenant_id`) REFERENCES `tenant`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='审计日志';
 
+-- ============================================================================
+-- 6. 项目管理表（2个表）- 实现租户下的二级隔离
+-- ============================================================================
+
+-- 6.1 项目表
+DROP TABLE IF EXISTS `project`;
+CREATE TABLE `project` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `name` VARCHAR(100) NOT NULL COMMENT '项目名称',
+  `code` VARCHAR(50) NOT NULL COMMENT '项目代码',
+  `description` TEXT COMMENT '描述',
+  `is_active` BOOLEAN DEFAULT TRUE NOT NULL COMMENT '是否激活',
+  `is_default` BOOLEAN DEFAULT FALSE NOT NULL COMMENT '是否为默认项目',
+  `settings` JSON COMMENT '项目设置',
+  `tenant_id` INT NOT NULL COMMENT '租户ID',
+  `created_at` BIGINT COMMENT '创建时间戳',
+  `updated_at` BIGINT COMMENT '更新时间戳',
+  INDEX `idx_tenant_id` (`tenant_id`),
+  UNIQUE KEY `uk_tenant_code` (`tenant_id`, `code`),
+  FOREIGN KEY (`tenant_id`) REFERENCES `tenant`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='项目表';
+
+-- 6.2 项目用户关联表
+DROP TABLE IF EXISTS `project_user`;
+CREATE TABLE `project_user` (
+  `project_id` INT NOT NULL COMMENT '项目ID',
+  `user_id` INT NOT NULL COMMENT '用户ID',
+  `role` VARCHAR(50) DEFAULT 'member' COMMENT '角色: owner/admin/member/viewer',
+  `created_at` BIGINT COMMENT '创建时间戳',
+  PRIMARY KEY (`project_id`, `user_id`),
+  INDEX `idx_user_id` (`user_id`),
+  FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`user_id`) REFERENCES `user`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='项目用户关联表';
+
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- ============================================================================
@@ -374,7 +422,13 @@ INSERT INTO `tenant` (`name`, `domain`, `is_active`) VALUES
 
 SET @tenant_id = LAST_INSERT_ID();
 
--- 6.2 插入权限数据
+-- 6.2 为默认租户创建默认项目
+INSERT INTO `project` (`name`, `code`, `is_default`, `is_active`, `tenant_id`, `created_at`, `updated_at`) VALUES
+('默认项目', 'default', TRUE, TRUE, @tenant_id, UNIX_TIMESTAMP(), UNIX_TIMESTAMP());
+
+SET @project_id = LAST_INSERT_ID();
+
+-- 6.3 插入权限数据
 INSERT INTO `permission` (`name`, `code`, `resource`, `action`, `description`) VALUES
 -- 告警规则权限
 ('查看告警规则', 'alert_rule.read', 'alert_rule', 'read', '可以查看告警规则列表和详情'),
@@ -454,6 +508,10 @@ SET @admin_user_id = LAST_INSERT_ID();
 -- 6.6 分配角色给管理员用户
 INSERT INTO `user_roles` (`user_id`, `role_id`) VALUES
 (@admin_user_id, @admin_role_id);
+
+-- 6.7 将管理员用户添加到默认项目（admin角色）
+INSERT INTO `project_user` (`project_id`, `user_id`, `role`, `created_at`) VALUES
+(@project_id, @admin_user_id, 'admin', UNIX_TIMESTAMP());
 
 -- ============================================================================
 -- 完成

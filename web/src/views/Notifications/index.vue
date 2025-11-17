@@ -262,10 +262,10 @@ const channels = ref([])
 const dialogVisible = ref(false)
 const formRef = ref()
 
-// 权限检查
-const canCreate = computed(() => userStore.hasPermission('notification.create'))
-const canUpdate = computed(() => userStore.hasPermission('notification.update'))
-const canDelete = computed(() => userStore.hasPermission('notification.delete'))
+// 权限检查 - 基于项目角色
+const canCreate = computed(() => userStore.canCreate())
+const canUpdate = computed(() => userStore.canUpdate())
+const canDelete = computed(() => userStore.canDelete())
 
 const isEdit = ref(false)
 const editId = ref(null)
@@ -277,7 +277,8 @@ const form = ref({
   config: {},
   filter_config: {},
   is_enabled: true,
-  is_default: false
+  is_default: false,
+  project_id: null
 })
 
 // 各类型配置
@@ -379,7 +380,8 @@ const resetForm = () => {
     config: {},
     filter_config: {},
     is_enabled: true,
-    is_default: false
+    is_default: false,
+    project_id: null
   }
   webhookUrl.value = ''
   feishuSecret.value = ''
@@ -462,6 +464,10 @@ const handleSubmit = async () => {
       await updateNotificationChannel(editId.value, form.value)
       ElMessage.success('更新成功')
     } else {
+      // 创建时设置当前项目ID
+      if (!form.value.project_id && userStore.currentProject) {
+        form.value.project_id = userStore.currentProject.id
+      }
       await createNotificationChannel(form.value)
       ElMessage.success('创建成功')
     }

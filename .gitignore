@@ -56,3 +56,6 @@ web/.vite/
 htmlcov/
 .pytest_cache/
 
+# AI
+.factory/
+.github/

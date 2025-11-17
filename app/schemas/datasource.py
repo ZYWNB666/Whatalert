@@ -1,6 +1,5 @@
 """数据源 Schema"""
 from typing import Dict, Any, Optional
-from datetime import datetime
 from pydantic import BaseModel, Field
 
 
@@ -19,7 +18,7 @@ class DataSourceBase(BaseModel):
 
 class DataSourceCreate(DataSourceBase):
     """创建数据源"""
-    pass
+    project_id: int = Field(..., description="项目ID")
 
 
 class DataSourceUpdate(BaseModel):
@@ -39,8 +38,9 @@ class DataSourceResponse(DataSourceBase):
     """数据源响应"""
     id: int
     tenant_id: int
-    created_at: datetime
-    updated_at: datetime
+    project_id: int
+    created_at: int
+    updated_at: int
 
     class Config:
         from_attributes = True

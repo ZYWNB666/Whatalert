@@ -15,6 +15,28 @@ service.interceptors.request.use(
     if (userStore.token) {
       config.headers['Authorization'] = `Bearer ${userStore.token}`
     }
+    
+    // 自动添加当前项目ID到请求参数（除了项目管理和登录相关接口）
+    const excludePaths = ['/auth', '/projects', '/users']
+    const shouldAddProjectId = !excludePaths.some(path => config.url.includes(path))
+    
+    if (shouldAddProjectId && userStore.currentProject) {
+      // 对于GET/DELETE请求，添加到params
+      if (config.method === 'get' || config.method === 'delete') {
+        config.params = {
+          ...config.params,
+          project_id: userStore.currentProject.id
+        }
+      }
+      // 对于POST/PUT请求，添加到data
+      else if (config.data && typeof config.data === 'object') {
+        config.data = {
+          ...config.data,
+          project_id: userStore.currentProject.id
+        }
+      }
+    }
+    
     return config
   },
   error => {
@@ -29,8 +51,13 @@ service.interceptors.response.use(
     return response.data
   },
   error => {
+    console.error('API请求失败:', error)
+    
     if (error.response) {
-      switch (error.response.status) {
+      const status = error.response.status
+      const detail = error.response.data?.detail || '请求失败'
+      
+      switch (status) {
         case 401:
           ElMessage.error('登录已过期，请重新登录')
           const userStore = useUserStore()
@@ -47,10 +74,12 @@ service.interceptors.response.use(
           ElMessage.error('服务器错误')
           break
         default:
-          ElMessage.error(error.response.data.detail || '请求失败')
+          ElMessage.error(detail)
       }
+    } else if (error.request) {
+      ElMessage.error('网络错误，请检查网络连接')
     } else {
-      ElMessage.error('网络错误')
+      ElMessage.error('请求配置错误')
     }
     return Promise.reject(error)
   }

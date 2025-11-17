@@ -27,7 +27,12 @@ async def list_audit_logs(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取审计日志列表"""
+    """获取审计日志列表（仅超级管理员）"""
+    from fastapi import HTTPException
+    
+    # 检查是否是超级管理员
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="只有超级管理员可以访问审计日志")
     # 构建查询条件
     conditions = [AuditLog.tenant_id == current_user.tenant_id]
     
@@ -97,7 +102,12 @@ async def get_audit_log(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取审计日志详情"""
+    """获取审计日志详情（仅超级管理员）"""
+    from fastapi import HTTPException
+    
+    # 检查是否是超级管理员
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="只有超级管理员可以访问审计日志")
     stmt = select(AuditLog).where(
         and_(
             AuditLog.id == log_id,
@@ -139,7 +149,12 @@ async def get_audit_stats(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取审计日志统计"""
+    """获取审计日志统计（仅超级管理员）"""
+    from fastapi import HTTPException
+    
+    # 检查是否是超级管理员
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="只有超级管理员可以访问审计日志")
     from sqlalchemy import case
     
     conditions = [AuditLog.tenant_id == current_user.tenant_id]

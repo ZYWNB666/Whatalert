@@ -85,7 +85,13 @@
         </el-form-item>
         
         <el-form-item label="数据源地址" prop="url">
-          <el-input v-model="form.url" placeholder="http://prometheus:9090" />
+          <el-input v-model="form.url" placeholder="http://prometheus:9090 或 http://vmselect:8481/select/0/prometheus" />
+          <div style="font-size: 12px; color: #909399; margin-top: 4px;">
+            <strong>请填写基础URL，不要包含具体的API端点：</strong><br/>
+            • Prometheus: http://prometheus:9090<br/>
+            • VictoriaMetrics: http://vmselect:8481/select/0/prometheus<br/>
+            系统会自动添加 /api/v1/query 或 /api/v1/query_range
+          </div>
         </el-form-item>
         
         <el-form-item label="描述">
@@ -160,10 +166,10 @@ const datasources = ref([])
 const dialogVisible = ref(false)
 const formRef = ref()
 
-// 权限检查
-const canCreate = computed(() => userStore.hasPermission('datasource.create'))
-const canUpdate = computed(() => userStore.hasPermission('datasource.update'))
-const canDelete = computed(() => userStore.hasPermission('datasource.delete'))
+// 权限检查 - 基于项目角色
+const canCreate = computed(() => userStore.canCreate())
+const canUpdate = computed(() => userStore.canUpdate())
+const canDelete = computed(() => userStore.canDelete())
 
 const isEdit = ref(false)
 const editId = ref(null)

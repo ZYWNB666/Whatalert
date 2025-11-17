@@ -52,7 +52,8 @@
               v-if="canDelete"
               link 
               type="danger" 
-              size="small" 
+              size="small"
+              :loading="row._deleting"
               @click="handleDelete(row)"
             >
               删除
@@ -76,10 +77,10 @@ const userStore = useUserStore()
 const loading = ref(false)
 const rules = ref([])
 
-// 权限检查
-const canCreate = computed(() => userStore.hasPermission('alert_rule.create'))
-const canUpdate = computed(() => userStore.hasPermission('alert_rule.update'))
-const canDelete = computed(() => userStore.hasPermission('alert_rule.delete'))
+// 权限检查 - 基于项目角色
+const canCreate = computed(() => userStore.canCreate())
+const canUpdate = computed(() => userStore.canUpdate())
+const canDelete = computed(() => userStore.canDelete())
 
 const loadRules = async () => {
   loading.value = true
@@ -117,12 +118,38 @@ const handleDelete = async (row) => {
       type: 'warning'
     })
     
-    await deleteAlertRule(row.id)
-    ElMessage.success('删除成功')
-    loadRules()
+    // 立即显示加载状态
+    row._deleting = true
+    
+    // 乐观更新：立即从列表中移除
+    const index = rules.value.findIndex(r => r.id === row.id)
+    if (index > -1) {
+      rules.value.splice(index, 1)
+    }
+    
+    // 显示删除中的提示
+    const loadingMessage = ElMessage({
+      message: '正在删除...',
+      type: 'info',
+      duration: 0
+    })
+    
+    try {
+      await deleteAlertRule(row.id)
+      loadingMessage.close()
+      ElMessage.success('删除成功')
+    } catch (error) {
+      // 如果删除失败，恢复数据
+      loadingMessage.close()
+      if (index > -1) {
+        rules.value.splice(index, 0, row)
+      }
+      ElMessage.error('删除失败，请重试')
+      console.error('删除失败:', error)
+    }
   } catch (e) {
     if (e !== 'cancel') {
-      console.error('删除失败:', e)
+      console.error('删除操作异常:', e)
     }
   }
 }

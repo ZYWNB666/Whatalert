@@ -14,9 +14,10 @@ from app.services.alert_grouper import AlertGrouper
 class AlertManager:
     """告警管理器"""
     
-    def __init__(self, db: AsyncSession, use_redis: bool = True):
-        self.db = db
-        self.notifier = NotificationService(db)
+    def __init__(self, use_redis: bool = True):
+        from app.db.database import AsyncSessionLocal
+        self.SessionLocal = AsyncSessionLocal
+        self.notifier = NotificationService()
         self._grouping_enabled = True  # 是否启用告警分组
         self._grouping_task = None
         self._use_redis = use_redis
@@ -25,12 +26,19 @@ class AlertManager:
         self._redis_init_pending = use_redis  # 标记 Redis 初始化待处理
         
         # 初始化分组器（内存版本作为后备）
-        self.grouper = AlertGrouper(db)
+        self.grouper = AlertGrouper()
+    
+    async def get_db_session(self):
+        """获取新的数据库会话"""
+        return self.SessionLocal()
     
     async def _init_redis_components(self):
         """异步初始化 Redis 组件"""
         if not self._redis_init_pending:
+            logger.debug("Redis 组件已初始化，跳过")
             return
+        
+        logger.info("开始初始化 Redis 组件...")
         
         try:
             from app.db.redis_client import RedisClient
@@ -39,22 +47,28 @@ class AlertManager:
             
             # 异步获取 Redis 客户端
             redis_client = await RedisClient.get_client()
+            logger.info(f"Redis 客户端获取成功: {redis_client}")
             
             # 初始化 Redis 分组器和锁管理器
             self._redis_grouper = RedisAlertGrouper(redis_client)
             self._lock_manager = AlertLockManager(redis_client)
             
             self._redis_init_pending = False
-            logger.info("✅ Redis 分组器和分布式锁已启用")
+            logger.info(f"✅ Redis 分组器和分布式锁已启用 (grouper={self._redis_grouper}, lock={self._lock_manager})")
         except Exception as e:
             logger.warning(f"⚠️  Redis 组件初始化失败，使用内存分组器: {str(e)}")
+            logger.exception(e)
             self._use_redis = False
             self._redis_init_pending = False
     
     @property
     def active_grouper(self):
         """获取当前激活的分组器"""
-        return self._redis_grouper if (self._use_redis and self._redis_grouper) else self.grouper
+        is_redis = self._use_redis and self._redis_grouper is not None
+        grouper = self._redis_grouper if is_redis else self.grouper
+        grouper_type = "Redis" if is_redis else "Memory"
+        logger.debug(f"使用{grouper_type}分组器 (use_redis={self._use_redis}, redis_grouper={self._redis_grouper is not None})")
+        return grouper
     
     async def send_alert(self, alert: AlertEvent, rule: AlertRule):
         """发送告警通知（支持分布式锁）"""
@@ -103,8 +117,9 @@ class AlertManager:
             logger.info(f"告警已添加到分组器: {alert.fingerprint}")
             
             # 标记为已处理（避免重复添加）
-            alert.last_sent_at = current_time
-            await self.db.commit()
+            async with self.SessionLocal() as db:
+                alert.last_sent_at = current_time
+                await db.commit()
         else:
             # 直接发送（不分组）
             if not self.should_send_notification(alert):
@@ -114,8 +129,9 @@ class AlertManager:
             await self.notifier.send_notification(alert, rule, is_recovery=False)
             
             # 更新最后发送时间
-            alert.last_sent_at = int(time.time())
-            await self.db.commit()
+            async with self.SessionLocal() as db:
+                alert.last_sent_at = int(time.time())
+                await db.commit()
     
     async def send_recovery(self, alert: AlertEvent, rule: AlertRule):
         """发送恢复通知"""
@@ -140,56 +156,29 @@ class AlertManager:
     
     async def is_silenced(self, alert: AlertEvent) -> bool:
         """检查告警是否被静默"""
+        from app.services.silence_matcher import check_silence_match
+        
         current_time = int(time.time())
         
-        # 查询生效的静默规则
-        stmt = select(SilenceRule).where(
-            SilenceRule.tenant_id == alert.tenant_id,
-            SilenceRule.is_enabled == True,
-            SilenceRule.starts_at <= current_time,
-            SilenceRule.ends_at >= current_time
-        )
-        result = await self.db.execute(stmt)
-        silence_rules = result.scalars().all()
+        # 使用独立会话查询生效的静默规则
+        async with self.SessionLocal() as db:
+            # 查询生效的静默规则
+            stmt = select(SilenceRule).where(
+                SilenceRule.tenant_id == alert.tenant_id,
+                SilenceRule.is_enabled == True,
+                SilenceRule.starts_at <= current_time,
+                SilenceRule.ends_at >= current_time
+            )
+            result = await db.execute(stmt)
+            silence_rules = result.scalars().all()
         
-        # 检查是否匹配静默规则
+        # 检查是否匹配静默规则（使用新的匹配逻辑）
         for rule in silence_rules:
-            if self.matches_silence_rule(alert, rule):
+            if check_silence_match(alert.labels, rule.matchers):
+                logger.info(f"告警匹配静默规则: fingerprint={alert.fingerprint}, silence_rule={rule.name}")
                 return True
         
         return False
-    
-    @staticmethod
-    def matches_silence_rule(alert: AlertEvent, silence_rule: SilenceRule) -> bool:
-        """检查告警是否匹配静默规则"""
-        for matcher in silence_rule.matchers:
-            label = matcher.get('label')
-            operator = matcher.get('operator')
-            value = matcher.get('value')
-            
-            alert_value = alert.labels.get(label)
-            if alert_value is None:
-                return False
-            
-            # 支持的操作符: =, !=, =~, !~
-            if operator == '=':
-                if str(alert_value) != str(value):
-                    return False
-            elif operator == '!=':
-                if str(alert_value) == str(value):
-                    return False
-            elif operator == '=~':
-                # 正则匹配
-                import re
-                if not re.match(value, str(alert_value)):
-                    return False
-            elif operator == '!~':
-                # 正则不匹配
-                import re
-                if re.match(value, str(alert_value)):
-                    return False
-        
-        return True
     
     @staticmethod
     def should_send_notification(alert: AlertEvent, min_interval: int = 300) -> bool:
@@ -203,30 +192,41 @@ class AlertManager:
     async def archive_alert(self, alert: AlertEvent):
         """归档告警到历史"""
         try:
+            # 重新查询告警对象(避免会话冲突)
+            stmt = select(AlertEvent).where(AlertEvent.fingerprint == alert.fingerprint)
+            result = await self.db.execute(stmt)
+            db_alert = result.scalar_one_or_none()
+            
+            if not db_alert:
+                logger.warning(f"告警不存在,无需归档: {alert.fingerprint}")
+                return
+            
             # 创建历史记录
             history = AlertEventHistory(
-                fingerprint=alert.fingerprint,
-                rule_id=alert.rule_id,
-                rule_name=alert.rule_name,
-                status=alert.status,
-                severity=alert.severity,
-                started_at=alert.started_at,
+                fingerprint=db_alert.fingerprint,
+                rule_id=db_alert.rule_id,
+                rule_name=db_alert.rule_name,
+                status=db_alert.status,
+                severity=db_alert.severity,
+                started_at=db_alert.started_at,
                 resolved_at=int(time.time()),
-                duration=int(time.time()) - alert.started_at,
-                value=alert.value,
-                labels=alert.labels,
-                annotations=alert.annotations,
-                expr=alert.expr,
-                tenant_id=alert.tenant_id
+                duration=int(time.time()) - db_alert.started_at,
+                value=db_alert.value,
+                labels=db_alert.labels,
+                annotations=db_alert.annotations,
+                expr=db_alert.expr,
+                tenant_id=db_alert.tenant_id,
+                project_id=db_alert.project_id
             )
             
             self.db.add(history)
             
             # 删除当前告警
-            self.db.delete(alert)
+            await self.db.delete(db_alert)
             await self.db.commit()
             
         except Exception as e:
+            await self.db.rollback()
             logger.error(f"归档告警失败: fingerprint={alert.fingerprint}, error={str(e)}")
     
     async def start_grouping_worker(self):
@@ -291,7 +291,9 @@ class AlertManager:
                     try:
                         await self._send_alert_group(group, is_recovery)
                     except Exception as e:
-                        logger.error(f"❌ 发送告警分组失败: group={group.group_key}, is_recovery={is_recovery}, error={str(e)}")
+                        # 兼容对象和字典格式
+                        group_key = group.get('group_key') if isinstance(group, dict) else getattr(group, 'group_key', 'unknown')
+                        logger.error(f"❌ 发送告警分组失败: group={group_key}, is_recovery={is_recovery}, error={str(e)}")
                         import traceback
                         logger.error(f"详细错误: {traceback.format_exc()}")
                 
@@ -309,88 +311,90 @@ class AlertManager:
     
     async def _send_alert_group(self, group, is_recovery: bool = False):
         """发送告警分组（支持对象和字典格式）"""
-        try:
-            # 兼容对象和字典两种格式
-            if isinstance(group, dict):
-                # Redis 分组器返回字典
-                alerts_data = group.get('alerts', [])
-                group_key = group.get('group_key')
-                rule_id = group.get('rule_id')
+        # 使用独立的数据库会话
+        async with self.SessionLocal() as db:
+            try:
+                # 兼容对象和字典两种格式
+                if isinstance(group, dict):
+                    # Redis 分组器返回字典
+                    alerts_data = group.get('alerts', [])
+                    group_key = group.get('group_key')
+                    rule_id = group.get('rule_id')
+                    
+                    if not alerts_data:
+                        logger.warning(f"分组为空: {group_key}")
+                        return
+                    
+                    # 查询规则对象
+                    stmt = select(AlertRule).where(AlertRule.id == rule_id)
+                    result = await db.execute(stmt)
+                    rule = result.scalar_one_or_none()
+                    
+                    if not rule:
+                        logger.warning(f"分组没有关联的规则: {group_key}")
+                        return
+                    
+                    # 将字典数据转换为 AlertEvent 对象列表（用于发送）
+                    alerts = []
+                    for alert_data in alerts_data:
+                        # 从数据库查询完整的 AlertEvent 对象
+                        stmt = select(AlertEvent).where(AlertEvent.fingerprint == alert_data['fingerprint'])
+                        result = await db.execute(stmt)
+                        alert_obj = result.scalar_one_or_none()
+                        if alert_obj:
+                            alerts.append(alert_obj)
+                    
+                else:
+                    # 内存分组器返回对象
+                    alerts = group.get_alerts()
+                    group_key = group.group_key
+                    rule = group.rule
+                    
+                    if not alerts:
+                        logger.warning(f"分组为空: {group_key}")
+                        return
+                    
+                    if not rule:
+                        logger.warning(f"分组没有关联的规则: {group_key}")
+                        return
                 
-                if not alerts_data:
-                    logger.warning(f"分组为空: {group_key}")
-                    return
+                status_text = "恢复" if is_recovery else "告警"
+                logger.info(f"⭐ 发送{status_text}分组: {group_key}, 告警数: {len(alerts)}")
                 
-                # 查询规则对象
-                stmt = select(AlertRule).where(AlertRule.id == rule_id)
-                result = await self.db.execute(stmt)
-                rule = result.scalar_one_or_none()
+                # 批量发送告警
+                await self.notifier.send_batch_notification(alerts, rule, is_recovery=is_recovery)
                 
-                if not rule:
-                    logger.warning(f"分组没有关联的规则: {group_key}")
-                    return
+                # 更新所有告警的最后发送时间
+                current_time = int(time.time())
+                for alert in alerts:
+                    try:
+                        # 重新查询对象以确保在当前会话中
+                        stmt = select(AlertEvent).where(AlertEvent.fingerprint == alert.fingerprint)
+                        result = await db.execute(stmt)
+                        db_alert = result.scalar_one_or_none()
+                        if db_alert:
+                            db_alert.last_sent_at = current_time
+                    except Exception as e:
+                        logger.warning(f"更新告警发送时间失败: {alert.fingerprint}, error={str(e)}")
                 
-                # 将字典数据转换为 AlertEvent 对象列表（用于发送）
-                alerts = []
-                for alert_data in alerts_data:
-                    # 从数据库查询完整的 AlertEvent 对象
-                    stmt = select(AlertEvent).where(AlertEvent.fingerprint == alert_data['fingerprint'])
-                    result = await self.db.execute(stmt)
-                    alert_obj = result.scalar_one_or_none()
-                    if alert_obj:
-                        alerts.append(alert_obj)
+                await db.commit()
                 
-            else:
-                # 内存分组器返回对象
-                alerts = group.get_alerts()
-                group_key = group.group_key
-                rule = group.rule
+                logger.info(f"✅ {status_text}分组发送成功: {group_key}")
                 
-                if not alerts:
-                    logger.warning(f"分组为空: {group_key}")
-                    return
+                # 标记分组为已发送（对象格式才需要）
+                if not isinstance(group, dict) and hasattr(group, 'mark_sent'):
+                    group.mark_sent()
                 
-                if not rule:
-                    logger.warning(f"分组没有关联的规则: {group_key}")
-                    return
-            
-            status_text = "恢复" if is_recovery else "告警"
-            logger.info(f"⭐ 发送{status_text}分组: {group_key}, 告警数: {len(alerts)}")
-            
-            # 批量发送告警
-            await self.notifier.send_batch_notification(alerts, rule, is_recovery=is_recovery)
-            
-            # 更新所有告警的最后发送时间
-            current_time = int(time.time())
-            for alert in alerts:
-                try:
-                    alert.last_sent_at = current_time
-                except Exception as e:
-                    # 如果是分离的对象，重新查询
-                    stmt = select(AlertEvent).where(AlertEvent.fingerprint == alert.fingerprint)
-                    result = await self.db.execute(stmt)
-                    db_alert = result.scalar_one_or_none()
-                    if db_alert:
-                        db_alert.last_sent_at = current_time
-            
-            await self.db.commit()
-            
-            logger.info(f"✅ {status_text}分组发送成功: {group_key}")
-            
-            # 标记分组为已发送（对象格式才需要）
-            if not isinstance(group, dict) and hasattr(group, 'mark_sent'):
-                group.mark_sent()
-            
-            # 清理已发送的分组
-            await self.active_grouper.clear_sent_group(group_key, is_recovery)
-            
-        except Exception as e:
-            await self.db.rollback()
-            group_key = group.get('group_key') if isinstance(group, dict) else getattr(group, 'group_key', 'unknown')
-            logger.error(f"❌ 发送告警分组失败: {group_key}, error={str(e)}")
-            import traceback
-            logger.error(f"详细错误: {traceback.format_exc()}")
-            raise
+                # 清理已发送的分组
+                await self.active_grouper.clear_sent_group(group_key, is_recovery)
+                
+            except Exception as e:
+                await db.rollback()
+                group_key = group.get('group_key') if isinstance(group, dict) else getattr(group, 'group_key', 'unknown')
+                logger.error(f"❌ 发送告警分组失败: {group_key}, error={str(e)}")
+                import traceback
+                logger.error(f"详细错误: {traceback.format_exc()}")
+                # 不再重新抛出异常，避免中断分组工作器
     
     def configure_grouper(
         self, 

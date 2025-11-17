@@ -1,52 +1,67 @@
+# ============================================
+# Whatalert - Alert System Dependencies
+# ============================================
+
 # Web Framework
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-gunicorn==21.2.0
-python-multipart==0.0.6
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+gunicorn==23.0.0
+python-multipart==0.0.20
 
 # Database
-sqlalchemy==2.0.23
-alembic==1.13.0
-aiomysql==0.2.0  # MySQL async driver
-PyMySQL==1.1.0   # MySQL sync driver (fallback)
+sqlalchemy==2.0.36
+alembic==1.14.0
+aiomysql==0.2.0
+PyMySQL==1.1.1
+cryptography==44.0.0  # Required by aiomysql
 
-# Redis (5.x 自带异步支持)
-redis==5.0.1
+# Redis (>=5.0 with async support)
+redis==5.2.1
 
-# Authentication
+# Authentication & Security
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+bcrypt==4.2.1  # Pin to 4.x for passlib compatibility (5.x breaks passlib 1.7.4)
+python-multipart==0.0.20
 
 # Data Validation
-pydantic==2.5.0
-pydantic-settings==2.1.0
-email-validator==2.1.0
+pydantic==2.10.4
+pydantic-settings==2.7.0
+email-validator==2.2.0
 
-# Monitoring Data Sources
-prometheus-api-client==0.5.3
-requests==2.31.0
+# HTTP Client & Notifications
+httpx==0.28.1
+aiosmtplib==3.0.2
+requests==2.32.3
+
+# Template Engine
+jinja2==3.1.5
 
 # Task Scheduling
-apscheduler==3.10.4
+apscheduler==3.11.0
 
-# Notifications
-httpx==0.25.2  # 异步 HTTP 客户端
-aiosmtplib==3.0.1  # 异步邮件
-jinja2==3.1.2  # 模板引擎
+# Monitoring Data Sources
+prometheus-api-client==0.5.5
 
 # Utilities
-python-dotenv==1.0.0
-pyyaml==6.0.1
-loguru==0.7.2
-tenacity==8.2.3  # 重试机制
+python-dotenv==1.0.1
+pyyaml==6.0.2
+loguru==0.7.3
+tenacity==9.0.0
+tzlocal==5.2  # Required by apscheduler
 
 # Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-pytest-cov==4.1.0
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0
+httpx==0.28.1  # For testing async clients
 
-# Development
-black==23.12.0
-flake8==6.1.0
-mypy==1.7.1
+# Development Tools (Optional)
+black==24.10.0
+flake8==7.1.1
+mypy==1.13.0
+
+# Additional required dependencies
+greenlet==3.1.1  # Required by SQLAlchemy async
+typing-extensions==4.12.2  # Required by pydantic
 

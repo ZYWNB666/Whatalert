@@ -1,6 +1,6 @@
 """审计日志模型"""
-from datetime import datetime
-from sqlalchemy import Column, String, Integer, ForeignKey, JSON, BigInteger, Text, DateTime
+import time
+from sqlalchemy import Column, String, Integer, ForeignKey, JSON, BigInteger, Text
 from app.models.base import Base
 
 
@@ -42,7 +42,7 @@ class AuditLog(Base):
     tenant_id = Column(Integer, ForeignKey('tenant.id', ondelete='CASCADE'), index=True)
     
     # 只有创建时间，没有更新时间（审计日志不应该被修改）
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(Integer, default=lambda: int(time.time()), nullable=False, comment="创建时间戳")
 
     def __repr__(self):
         return f"<AuditLog(action='{self.action}', resource='{self.resource_type}')>"

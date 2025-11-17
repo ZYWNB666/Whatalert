@@ -68,6 +68,12 @@ const routes = [
         meta: { title: '通知渠道', icon: 'ChatDotRound', permission: 'notification.read' }
       },
       {
+        path: 'projects',
+        name: 'Projects',
+        component: () => import('@/views/Projects/index.vue'),
+        meta: { title: '项目管理', icon: 'Folder' }
+      },
+      {
         path: 'users',
         name: 'Users',
         component: () => import('@/views/Users/index.vue'),
@@ -83,7 +89,7 @@ const routes = [
         path: 'audit',
         name: 'Audit',
         component: () => import('@/views/Audit/index.vue'),
-        meta: { title: '审计日志', icon: 'Tickets', permission: 'audit.read' }
+        meta: { title: '审计日志', icon: 'Tickets', requireSuperuser: true }
       },
       {
         path: 'profile',
@@ -111,6 +117,13 @@ router.beforeEach(async (to, from, next) => {
     // 有token但没有用户信息，加载用户信息
     try {
       await userStore.fetchUserInfo()
+      
+      // 检查是否需要超级管理员权限
+      if (to.meta?.requireSuperuser && !userStore.isSuperuser) {
+        next('/')
+        return
+      }
+      
       next()
     } catch (error) {
       // 加载失败，清除token并跳转到登录页
@@ -118,6 +131,12 @@ router.beforeEach(async (to, from, next) => {
       next('/login')
     }
   } else {
+    // 已登录，检查权限
+    if (to.meta?.requireSuperuser && !userStore.isSuperuser) {
+      next('/')
+      return
+    }
+    
     next()
   }
 })

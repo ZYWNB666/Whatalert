@@ -20,6 +20,53 @@
         </div>
       </template>
       
+      <!-- 查询条件 -->
+      <el-form :model="queryForm" inline style="margin-bottom: 20px;">
+        <el-form-item label="时间范围">
+          <el-date-picker
+            v-model="timeRange"
+            type="datetimerange"
+            range-separator="至"
+            start-placeholder="开始时间"
+            end-placeholder="结束时间"
+            style="width: 360px"
+            @change="handleTimeRangeChange"
+          />
+        </el-form-item>
+        
+        <el-form-item label="告警等级">
+          <el-select v-model="queryForm.severity" placeholder="全部" clearable style="width: 120px">
+            <el-option label="全部" value="" />
+            <el-option label="Critical" value="critical" />
+            <el-option label="Warning" value="warning" />
+            <el-option label="Info" value="info" />
+          </el-select>
+        </el-form-item>
+        
+        <el-form-item label="标签键">
+          <el-input 
+            v-model="queryForm.label_key" 
+            placeholder="如: instance" 
+            clearable 
+            style="width: 150px"
+          />
+        </el-form-item>
+        
+        <el-form-item label="标签值">
+          <el-input 
+            v-model="queryForm.label_value" 
+            placeholder="如: prod-server-1" 
+            clearable 
+            style="width: 150px"
+          />
+        </el-form-item>
+        
+        <el-form-item>
+          <el-button type="primary" @click="handleQuery">查询</el-button>
+          <el-button @click="handleReset">重置</el-button>
+        </el-form-item>
+      </el-form>
+      
       <!-- 分组显示模式 -->
       <div v-if="groupByRule" class="grouped-alerts">
         <el-collapse v-model="activeGroups">
@@ -180,6 +227,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { getAlertHistory } from '@/api/alertRules'
+import { Refresh } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 
 const loading = ref(false)
@@ -189,6 +237,16 @@ const currentAlert = ref(null)
 const groupByRule = ref(true)
 const activeGroups = ref([])
 const isFirstLoad = ref(true)  // 标记是否首次加载
+
+// 查询条件
+const timeRange = ref([])
+const queryForm = ref({
+  severity: '',
+  label_key: '',
+  label_value: '',
+  start_time: null,
+  end_time: null
+})
 
 // 按规则分组
 const groupedAlerts = computed(() => {
@@ -201,6 +259,32 @@ const groupedAlerts = computed(() => {
   })
   return groups
 })
+
+const handleTimeRangeChange = (value) => {
+  if (value && value.length === 2) {
+    queryForm.value.start_time = Math.floor(value[0].getTime() / 1000)
+    queryForm.value.end_time = Math.floor(value[1].getTime() / 1000)
+  } else {
+    queryForm.value.start_time = null
+    queryForm.value.end_time = null
+  }
+}
+
+const handleQuery = () => {
+  loadAlerts()
+}
+
+const handleReset = () => {
+  timeRange.value = []
+  queryForm.value = {
+    severity: '',
+    label_key: '',
+    label_value: '',
+    start_time: null,
+    end_time: null
+  }
+  loadAlerts()
+}
 
 const handleGroupChange = () => {
   if (groupByRule.value) {
@@ -215,7 +299,25 @@ const loadAlerts = async () => {
     // 保存当前展开的分组状态
     const previousActiveGroups = [...activeGroups.value]
     
-    alerts.value = await getAlertHistory({ limit: 100 })
+    // 构建查询参数
+    const params = { limit: 100 }
+    if (queryForm.value.severity) {
+      params.severity = queryForm.value.severity
+    }
+    if (queryForm.value.start_time) {
+      params.start_time = queryForm.value.start_time
+    }
+    if (queryForm.value.end_time) {
+      params.end_time = queryForm.value.end_time
+    }
+    if (queryForm.value.label_key) {
+      params.label_key = queryForm.value.label_key
+    }
+    if (queryForm.value.label_value) {
+      params.label_value = queryForm.value.label_value
+    }
+    
+    alerts.value = await getAlertHistory(params)
     
     // 只在首次加载时展开所有分组
     if (groupByRule.value && isFirstLoad.value) {
@@ -279,6 +381,12 @@ onMounted(() => {
 </script>
 
 <style scoped lang="scss">
+.alert-history {
+  :deep(.el-form--inline .el-form-item) {
+    margin-bottom: 10px;
+  }
+}
+
 .card-header {
   display: flex;
   justify-content: space-between;

@@ -23,6 +23,7 @@ class Tenant(BaseModel):
     # 关系
     users = relationship("User", back_populates="tenant", cascade="all, delete-orphan")
     roles = relationship("Role", back_populates="tenant", cascade="all, delete-orphan")
+    projects = relationship("Project", back_populates="tenant", cascade="all, delete-orphan")
     alert_rules = relationship("AlertRule", back_populates="tenant", cascade="all, delete-orphan")
     datasources = relationship("DataSource", back_populates="tenant", cascade="all, delete-orphan")
     silence_rules = relationship("SilenceRule", back_populates="tenant", cascade="all, delete-orphan")

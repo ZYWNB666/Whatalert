@@ -30,11 +30,13 @@ class SilenceRule(BaseModel):
     created_by = Column(String(100), comment="创建者")
     comment = Column(Text, comment="备注")
     
-    # 多租户
+    # 多租户和项目
     tenant_id = Column(Integer, ForeignKey('tenant.id', ondelete='CASCADE'), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey('project.id', ondelete='CASCADE'), nullable=True, index=True, comment="项目ID")
     
     # 关系
     tenant = relationship("Tenant", back_populates="silence_rules")
+    project = relationship("Project", back_populates="silence_rules")
 
     def __repr__(self):
         return f"<SilenceRule(name='{self.name}', enabled='{self.is_enabled}')>"
