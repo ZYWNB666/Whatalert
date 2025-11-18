@@ -8,6 +8,7 @@ from app.db.database import get_db
 from app.models.audit import AuditLog
 from app.models.user import User
 from app.api.auth import get_current_user
+from app.services.cache_service import CacheService
 from app.schemas.audit import AuditLogResponse, AuditLogCreate
 
 router = APIRouter()
@@ -27,12 +28,35 @@ async def list_audit_logs(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取审计日志列表（仅超级管理员）"""
+    """获取审计日志列表（仅超级管理员）- 带缓存"""
     from fastapi import HTTPException
     
     # 检查是否是超级管理员
     if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="只有超级管理员可以访问审计日志")
+    
+    # 生成缓存键（包含所有查询参数）
+    cache_key = f"audit:list:tenant:{current_user.tenant_id}:page:{page}:size:{page_size}"
+    if action:
+        cache_key += f":action:{action}"
+    if resource_type:
+        cache_key += f":resource:{resource_type}"
+    if username:
+        cache_key += f":user:{username}"
+    if ip_address:
+        cache_key += f":ip:{ip_address}"
+    if status:
+        cache_key += f":status:{status}"
+    if start_time:
+        cache_key += f":start:{start_time}"
+    if end_time:
+        cache_key += f":end:{end_time}"
+    
+    # 尝试从缓存获取
+    cached_data = await CacheService.get(cache_key)
+    if cached_data is not None:
+        return cached_data
+    
     # 构建查询条件
     conditions = [AuditLog.tenant_id == current_user.tenant_id]
     
@@ -88,12 +112,17 @@ async def list_audit_logs(
             "created_at": log.created_at
         })
     
-    return {
+    result_data = {
         "total": total,
         "page": page,
         "page_size": page_size,
         "data": log_data
     }
+    
+    # 存入缓存（审计日志缓存30秒）
+    await CacheService.set(cache_key, result_data, 30)
+    
+    return result_data
 
 
 @router.get("/{log_id}")
@@ -149,12 +178,25 @@ async def get_audit_stats(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取审计日志统计（仅超级管理员）"""
+    """获取审计日志统计（仅超级管理员）- 带缓存"""
     from fastapi import HTTPException
     
     # 检查是否是超级管理员
     if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="只有超级管理员可以访问审计日志")
+    
+    # 生成缓存键
+    cache_key = f"audit:stats:tenant:{current_user.tenant_id}"
+    if start_time:
+        cache_key += f":start:{start_time}"
+    if end_time:
+        cache_key += f":end:{end_time}"
+    
+    # 尝试从缓存获取
+    cached_data = await CacheService.get(cache_key)
+    if cached_data is not None:
+        return cached_data
+    
     from sqlalchemy import case
     
     conditions = [AuditLog.tenant_id == current_user.tenant_id]
@@ -190,11 +232,16 @@ async def get_audit_stats(
     status_result = await db.execute(status_stmt)
     status_stats = [{"status": row[0], "count": row[1]} for row in status_result]
     
-    return {
+    result_data = {
         "action_stats": action_stats,
         "resource_stats": resource_stats,
         "status_stats": status_stats
     }
+    
+    # 存入缓存（统计数据缓存60秒）
+    await CacheService.set(cache_key, result_data, 60)
+    
+    return result_data
 
 
 async def create_audit_log(

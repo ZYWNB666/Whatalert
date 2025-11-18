@@ -11,6 +11,7 @@ from app.models.silence import SilenceRule
 from app.models.user import User
 from app.api.auth import get_current_user
 from app.services.silence_matcher import check_silence_match
+from app.services.cache_service import CacheService
 from app.schemas.alert import (
     AlertRuleCreate, AlertRuleUpdate, AlertRuleResponse,
     AlertEventResponse, AlertEventHistoryResponse
@@ -36,6 +37,13 @@ async def create_alert_rule(
     await db.commit()
     await db.refresh(new_rule)
     
+    # 使缓存失效
+    await CacheService.invalidate_list_cache(
+        CacheService.PREFIX_ALERT_RULE,
+        current_user.tenant_id,
+        rule_data.project_id
+    )
+    
     return new_rule
 
 
@@ -47,7 +55,20 @@ async def list_alert_rules(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取告警规则列表(按项目隔离)"""
+    """获取告警规则列表(按项目隔离) - 带缓存"""
+    # 生成缓存键，包含分页参数
+    cache_key = f"{CacheService.PREFIX_ALERT_RULE}:list:tenant:{current_user.tenant_id}"
+    if project_id is not None:
+        cache_key += f":project:{project_id}"
+    cache_key += f":skip:{skip}:limit:{limit}"
+    
+    # 尝试从缓存获取
+    cached_data = await CacheService.get(cache_key)
+    if cached_data is not None:
+        # 缓存命中，直接返回字典数据（FastAPI会自动序列化）
+        return cached_data
+    
+    # 缓存未命中，查询数据库
     conditions = [AlertRule.tenant_id == current_user.tenant_id]
     if project_id is not None:
         conditions.append(AlertRule.project_id == project_id)
@@ -57,7 +78,13 @@ async def list_alert_rules(
     result = await db.execute(stmt)
     rules = result.scalars().all()
     
-    return rules
+    # 转换为字典列表以便缓存和返回
+    rules_data = [rule.to_dict() for rule in rules]
+    
+    # 存入缓存
+    await CacheService.set(cache_key, rules_data, CacheService.LIST_TTL)
+    
+    return rules_data
 
 
 @router.get("/{rule_id}", response_model=AlertRuleResponse)
@@ -67,7 +94,17 @@ async def get_alert_rule(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取告警规则详情"""
+    """获取告警规则详情 - 带缓存"""
+    # 生成缓存键
+    cache_key = f"{CacheService.PREFIX_ALERT_RULE}:detail:{rule_id}"
+    
+    # 尝试从缓存获取
+    cached_data = await CacheService.get(cache_key)
+    if cached_data is not None:
+        # 缓存命中，直接返回字典数据
+        return cached_data
+    
+    # 缓存未命中，查询数据库
     conditions = [
         AlertRule.id == rule_id,
         AlertRule.tenant_id == current_user.tenant_id
@@ -82,7 +119,13 @@ async def get_alert_rule(
     if not rule:
         raise HTTPException(status_code=404, detail="Alert rule not found")
     
-    return rule
+    # 转换为字典以便缓存和返回
+    rule_data = rule.to_dict()
+    
+    # 存入缓存
+    await CacheService.set(cache_key, rule_data, CacheService.DETAIL_TTL)
+    
+    return rule_data
 
 
 @router.put("/{rule_id}", response_model=AlertRuleResponse)
@@ -131,6 +174,14 @@ async def update_alert_rule(
     await db.commit()
     await db.refresh(rule)
     
+    # 使缓存失效
+    await CacheService.invalidate_detail_cache(CacheService.PREFIX_ALERT_RULE, rule_id)
+    await CacheService.invalidate_list_cache(
+        CacheService.PREFIX_ALERT_RULE,
+        current_user.tenant_id,
+        rule.project_id
+    )
+    
     return rule
 
 
@@ -159,6 +210,9 @@ async def delete_alert_rule(
     if not rule:
         raise HTTPException(status_code=404, detail="Alert rule not found")
     
+    # 保存项目ID用于缓存失效
+    rule_project_id = rule.project_id
+    
     try:
         # 方法1：手动清理关联数据（兼容旧数据库）
         # 删除告警规则通知渠道关联
@@ -176,6 +230,14 @@ async def delete_alert_rule(
         
         logger.info(f"成功删除告警规则: id={rule_id}, name={rule.name}")
         
+        # 使缓存失效
+        await CacheService.invalidate_detail_cache(CacheService.PREFIX_ALERT_RULE, rule_id)
+        await CacheService.invalidate_list_cache(
+            CacheService.PREFIX_ALERT_RULE,
+            current_user.tenant_id,
+            rule_project_id
+        )
+        
     except Exception as e:
         await db.rollback()
         logger.error(f"删除告警规则失败: id={rule_id}, error={str(e)}")
@@ -191,7 +253,18 @@ async def list_current_alerts(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取当前告警列表（平铺）- 不包含已恢复的告警"""
+    """获取当前告警列表（平铺）- 不包含已恢复的告警 - 带动态缓存"""
+    # 生成缓存键
+    cache_key = f"alert_event:current:tenant:{current_user.tenant_id}"
+    if project_id is not None:
+        cache_key += f":project:{project_id}"
+    cache_key += f":silenced:{include_silenced}:skip:{skip}:limit:{limit}"
+    
+    # 尝试从缓存获取（10秒TTL，因为是实时数据）
+    cached_data = await CacheService.get(cache_key)
+    if cached_data is not None:
+        return cached_data
+    
     conditions = [
         AlertEvent.tenant_id == current_user.tenant_id,
         AlertEvent.status.in_(['pending', 'firing'])  # 只显示 pending 和 firing
@@ -251,10 +324,15 @@ async def list_current_alerts(
             "alerts": [e.to_dict() for e in filtered_events]
         }
     
-    return {
+    result_data = {
         "total": total,
         "alerts": [e.to_dict() for e in events]
     }
+    
+    # 存入缓存（10秒TTL）
+    await CacheService.set(cache_key, result_data, 10)
+    
+    return result_data
 
 
 @router.get("/events/current/grouped")
@@ -266,7 +344,18 @@ async def list_current_alerts_grouped(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ) -> Dict[str, Any]:
-    """获取按规则名称分组的当前告警列表 - 不包含已恢复的告警"""
+    """获取按规则名称分组的当前告警列表 - 不包含已恢复的告警 - 带动态缓存"""
+    # 生成缓存键
+    cache_key = f"alert_event:current:grouped:tenant:{current_user.tenant_id}"
+    if project_id is not None:
+        cache_key += f":project:{project_id}"
+    cache_key += f":silenced:{include_silenced}:page:{page}:size:{page_size}"
+    
+    # 尝试从缓存获取（10秒TTL）
+    cached_data = await CacheService.get(cache_key)
+    if cached_data is not None:
+        return cached_data
+    
     # 1. 获取所有当前告警（只包含 pending 和 firing 状态）
     conditions = [
         AlertEvent.tenant_id == current_user.tenant_id,
@@ -346,13 +435,18 @@ async def list_current_alerts_grouped(
     end_idx = start_idx + page_size
     paginated_groups = grouped_list[start_idx:end_idx]
     
-    return {
+    result_data = {
         "total": total,
         "page": page,
         "page_size": page_size,
         "total_pages": (total + page_size - 1) // page_size if total > 0 else 0,
         "groups": paginated_groups
     }
+    
+    # 存入缓存（10秒TTL）
+    await CacheService.set(cache_key, result_data, 10)
+    
+    return result_data
 
 
 @router.get("/events/history", response_model=List[AlertEventHistoryResponse])
@@ -369,7 +463,30 @@ async def list_alert_history(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取历史告警列表（平铺）- 支持多条件过滤"""
+    """获取历史告警列表（平铺）- 支持多条件过滤 - 带动态缓存"""
+    # 生成缓存键
+    cache_key = f"alert_history:list:tenant:{current_user.tenant_id}"
+    if project_id is not None:
+        cache_key += f":project:{project_id}"
+    if rule_id is not None:
+        cache_key += f":rule:{rule_id}"
+    if severity:
+        cache_key += f":severity:{severity}"
+    if start_time is not None:
+        cache_key += f":start:{start_time}"
+    if end_time is not None:
+        cache_key += f":end:{end_time}"
+    if label_key:
+        cache_key += f":lkey:{label_key}"
+    if label_value:
+        cache_key += f":lval:{label_value}"
+    cache_key += f":skip:{skip}:limit:{limit}"
+    
+    # 尝试从缓存获取（60秒TTL，历史数据变化较慢）
+    cached_data = await CacheService.get(cache_key)
+    if cached_data is not None:
+        return cached_data
+    
     conditions = [AlertEventHistory.tenant_id == current_user.tenant_id]
     
     if project_id is not None:
@@ -398,7 +515,13 @@ async def list_alert_history(
     elif label_key:
         events = [e for e in events if label_key in e.labels]
     
-    return events
+    # 转换为字典列表
+    events_data = [e.to_dict() for e in events]
+    
+    # 存入缓存（60秒TTL）
+    await CacheService.set(cache_key, events_data, 60)
+    
+    return events_data
 
 
 @router.get("/events/history/count")
@@ -441,7 +564,17 @@ async def get_current_alerts_stats(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取当前告警统计 - 只返回数量，不返回告警详情"""
+    """获取当前告警统计 - 只返回数量，不返回告警详情 - 带动态缓存"""
+    # 生成缓存键
+    cache_key = f"alert_event:stats:tenant:{current_user.tenant_id}"
+    if project_id is not None:
+        cache_key += f":project:{project_id}"
+    
+    # 尝试从缓存获取（5秒TTL，统计数据更新频繁）
+    cached_data = await CacheService.get(cache_key)
+    if cached_data is not None:
+        return cached_data
+    
     conditions = [
         AlertEvent.tenant_id == current_user.tenant_id,
         AlertEvent.status.in_(['pending', 'firing'])
@@ -462,14 +595,16 @@ async def get_current_alerts_stats(
     )
     pending_count = await db.scalar(pending_stmt)
     
-    return {
+    result_data = {
         "firing": firing_count or 0,
         "pending": pending_count or 0,
         "total": (firing_count or 0) + (pending_count or 0)
     }
-
     
-    return {"count": count}
+    # 存入缓存（5秒TTL）
+    await CacheService.set(cache_key, result_data, 5)
+    
+    return result_data
 
 
 @router.get("/events/history/grouped")
@@ -480,7 +615,18 @@ async def list_alert_history_grouped(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ) -> Dict[str, Any]:
-    """获取按规则名称分组的历史告警列表"""
+    """获取按规则名称分组的历史告警列表 - 带动态缓存"""
+    # 生成缓存键
+    cache_key = f"alert_history:grouped:tenant:{current_user.tenant_id}"
+    if project_id is not None:
+        cache_key += f":project:{project_id}"
+    cache_key += f":page:{page}:size:{page_size}"
+    
+    # 尝试从缓存获取（60秒TTL）
+    cached_data = await CacheService.get(cache_key)
+    if cached_data is not None:
+        return cached_data
+    
     # 1. 获取所有历史告警
     conditions = [AlertEventHistory.tenant_id == current_user.tenant_id]
     if project_id is not None:
@@ -531,13 +677,18 @@ async def list_alert_history_grouped(
     end_idx = start_idx + page_size
     paginated_groups = grouped_list[start_idx:end_idx]
     
-    return {
+    result_data = {
         "total": total,
         "page": page,
         "page_size": page_size,
         "total_pages": (total + page_size - 1) // page_size if total > 0 else 0,
         "groups": paginated_groups
     }
+    
+    # 存入缓存（60秒TTL）
+    await CacheService.set(cache_key, result_data, 60)
+    
+    return result_data
 
 
 @router.get("/grouping/stats")

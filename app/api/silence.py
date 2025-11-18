@@ -9,6 +9,7 @@ from app.models.alert import AlertEvent
 from app.models.user import User
 from app.api.auth import get_current_user
 from app.services.silence_matcher import validate_matchers, check_silence_match
+from app.services.cache_service import CacheService
 import time
 
 router = APIRouter()
@@ -48,6 +49,9 @@ async def create_silence_rule(
     await db.commit()
     await db.refresh(new_rule)
     
+    # 清除缓存
+    await CacheService.delete_pattern(f"silence:list:tenant:{current_user.tenant_id}:*")
+    
     return new_rule.to_dict()
 
 
@@ -57,7 +61,17 @@ async def list_silence_rules(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取静默规则列表"""
+    """获取静默规则列表 - 带动态缓存"""
+    # 生成缓存键
+    cache_key = f"silence:list:tenant:{current_user.tenant_id}"
+    if project_id is not None:
+        cache_key += f":project:{project_id}"
+    
+    # 尝试从缓存获取（30秒TTL，静默规则变化较频繁）
+    cached_data = await CacheService.get(cache_key)
+    if cached_data is not None:
+        return cached_data
+    
     conditions = [SilenceRule.tenant_id == current_user.tenant_id]
     if project_id is not None:
         conditions.append(SilenceRule.project_id == project_id)
@@ -66,7 +80,12 @@ async def list_silence_rules(
     result = await db.execute(stmt)
     rules = result.scalars().all()
     
-    return [rule.to_dict() for rule in rules]
+    rules_data = [rule.to_dict() for rule in rules]
+    
+    # 存入缓存（30秒TTL）
+    await CacheService.set(cache_key, rules_data, 30)
+    
+    return rules_data
 
 
 @router.put("/{rule_id}")
@@ -105,6 +124,10 @@ async def update_silence_rule(
     await db.commit()
     await db.refresh(rule)
     
+    # 清除缓存
+    await CacheService.delete_pattern(f"silence:list:tenant:{current_user.tenant_id}:*")
+    await CacheService.delete(f"silence:detail:{rule_id}")
+    
     return rule.to_dict()
 
 
@@ -132,6 +155,10 @@ async def delete_silence_rule(
     
     await db.delete(rule)
     await db.commit()
+    
+    # 清除缓存
+    await CacheService.delete_pattern(f"silence:list:tenant:{current_user.tenant_id}:*")
+    await CacheService.delete(f"silence:detail:{rule_id}")
     
     return {"message": "Silence rule deleted"}
 

@@ -8,9 +8,10 @@ from app.db.database import get_db
 from app.models.notification import NotificationChannel
 from app.models.user import User
 from app.api.auth import get_current_user
+from app.services.cache_service import CacheService
 from app.schemas.notification import (
-    NotificationChannelCreate, 
-    NotificationChannelUpdate, 
+    NotificationChannelCreate,
+    NotificationChannelUpdate,
     NotificationChannelResponse
 )
 
@@ -39,6 +40,9 @@ async def create_notification_channel(
     await db.commit()
     await db.refresh(new_channel)
     
+    # 清除缓存
+    await CacheService.delete_pattern(f"notification:list:tenant:{current_user.tenant_id}:*")
+    
     return new_channel
 
 
@@ -48,7 +52,18 @@ async def list_notification_channels(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取通知渠道列表"""
+    """获取通知渠道列表 - 带缓存"""
+    # 生成缓存键
+    cache_key = f"notification:list:tenant:{current_user.tenant_id}"
+    if project_id is not None:
+        cache_key += f":project:{project_id}"
+    
+    # 尝试从缓存获取
+    cached_data = await CacheService.get(cache_key)
+    if cached_data is not None:
+        return cached_data
+    
+    # 从数据库查询
     conditions = [NotificationChannel.tenant_id == current_user.tenant_id]
     if project_id is not None:
         conditions.append(NotificationChannel.project_id == project_id)
@@ -57,7 +72,25 @@ async def list_notification_channels(
     result = await db.execute(stmt)
     channels = result.scalars().all()
     
-    return channels
+    # 转换为字典列表
+    channel_data = []
+    for channel in channels:
+        channel_data.append({
+            "id": channel.id,
+            "name": channel.name,
+            "type": channel.type,
+            "config": channel.config,
+            "is_enabled": channel.is_enabled,
+            "project_id": channel.project_id,
+            "tenant_id": channel.tenant_id,
+            "created_at": channel.created_at,
+            "updated_at": channel.updated_at
+        })
+    
+    # 存入缓存
+    await CacheService.set(cache_key, channel_data, 60)
+    
+    return channel_data
 
 
 @router.get("/{channel_id}", response_model=NotificationChannelResponse)
@@ -114,6 +147,10 @@ async def update_notification_channel(
     await db.commit()
     await db.refresh(channel)
     
+    # 清除缓存
+    await CacheService.delete_pattern(f"notification:list:tenant:{current_user.tenant_id}:*")
+    await CacheService.delete(f"notification:detail:{channel_id}")
+    
     return channel
 
 
@@ -141,6 +178,10 @@ async def delete_notification_channel(
     
     await db.delete(channel)
     await db.commit()
+    
+    # 清除缓存
+    await CacheService.delete_pattern(f"notification:list:tenant:{current_user.tenant_id}:*")
+    await CacheService.delete(f"notification:detail:{channel_id}")
     
     return {"message": "Notification channel deleted"}
 

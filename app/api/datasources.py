@@ -8,6 +8,7 @@ from app.db.database import get_db
 from app.models.datasource import DataSource
 from app.models.user import User
 from app.api.auth import get_current_user
+from app.services.cache_service import CacheService
 from app.schemas.datasource import DataSourceCreate, DataSourceUpdate, DataSourceResponse
 
 router = APIRouter()
@@ -41,6 +42,13 @@ async def create_datasource(
     await db.commit()
     await db.refresh(new_datasource)
     
+    # 使缓存失效
+    await CacheService.invalidate_list_cache(
+        CacheService.PREFIX_DATASOURCE,
+        current_user.tenant_id,
+        datasource_data.project_id
+    )
+    
     return new_datasource
 
 
@@ -50,7 +58,19 @@ async def list_datasources(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取数据源列表(按项目隔离)"""
+    """获取数据源列表(按项目隔离) - 带缓存"""
+    # 生成缓存键
+    cache_key = f"{CacheService.PREFIX_DATASOURCE}:list:tenant:{current_user.tenant_id}"
+    if project_id is not None:
+        cache_key += f":project:{project_id}"
+    
+    # 尝试从缓存获取
+    cached_data = await CacheService.get(cache_key)
+    if cached_data is not None:
+        # 缓存命中，直接返回字典数据
+        return cached_data
+    
+    # 缓存未命中，查询数据库
     conditions = [DataSource.tenant_id == current_user.tenant_id]
     if project_id is not None:
         conditions.append(DataSource.project_id == project_id)
@@ -59,7 +79,13 @@ async def list_datasources(
     result = await db.execute(stmt)
     datasources = result.scalars().all()
     
-    return datasources
+    # 转换为字典列表以便缓存和返回
+    datasources_data = [ds.to_dict() for ds in datasources]
+    
+    # 存入缓存
+    await CacheService.set(cache_key, datasources_data, CacheService.LIST_TTL)
+    
+    return datasources_data
 
 
 @router.get("/{datasource_id}", response_model=DataSourceResponse)
@@ -69,7 +95,17 @@ async def get_datasource(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取数据源详情"""
+    """获取数据源详情 - 带缓存"""
+    # 生成缓存键
+    cache_key = f"{CacheService.PREFIX_DATASOURCE}:detail:{datasource_id}"
+    
+    # 尝试从缓存获取
+    cached_data = await CacheService.get(cache_key)
+    if cached_data is not None:
+        # 缓存命中，直接返回字典数据
+        return cached_data
+    
+    # 缓存未命中，查询数据库
     conditions = [
         DataSource.id == datasource_id,
         DataSource.tenant_id == current_user.tenant_id
@@ -84,7 +120,13 @@ async def get_datasource(
     if not datasource:
         raise HTTPException(status_code=404, detail="Datasource not found")
     
-    return datasource
+    # 转换为字典以便缓存和返回
+    datasource_data = datasource.to_dict()
+    
+    # 存入缓存
+    await CacheService.set(cache_key, datasource_data, CacheService.DETAIL_TTL)
+    
+    return datasource_data
 
 
 @router.put("/{datasource_id}", response_model=DataSourceResponse)
@@ -116,6 +158,14 @@ async def update_datasource(
     await db.commit()
     await db.refresh(datasource)
     
+    # 使缓存失效
+    await CacheService.invalidate_detail_cache(CacheService.PREFIX_DATASOURCE, datasource_id)
+    await CacheService.invalidate_list_cache(
+        CacheService.PREFIX_DATASOURCE,
+        current_user.tenant_id,
+        datasource.project_id
+    )
+    
     return datasource
 
 
@@ -141,8 +191,19 @@ async def delete_datasource(
     if not datasource:
         raise HTTPException(status_code=404, detail="Datasource not found")
     
+    # 保存项目ID用于缓存失效
+    datasource_project_id = datasource.project_id
+    
     await db.delete(datasource)
     await db.commit()
+    
+    # 使缓存失效
+    await CacheService.invalidate_detail_cache(CacheService.PREFIX_DATASOURCE, datasource_id)
+    await CacheService.invalidate_list_cache(
+        CacheService.PREFIX_DATASOURCE,
+        current_user.tenant_id,
+        datasource_project_id
+    )
     
     return {"message": "Datasource deleted"}
 

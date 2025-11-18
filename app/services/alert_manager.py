@@ -62,15 +62,15 @@ class AlertManager:
         
         try:
             from app.db.redis_client import RedisClient
-            from app.services.redis_alert_grouper import RedisAlertGrouper
+            from app.services.optimized_alert_grouper import OptimizedAlertGrouper
             from app.core.distributed_lock import AlertLockManager
             
             # 异步获取 Redis 客户端
             redis_client = await RedisClient.get_client()
             logger.info(f"Redis 客户端获取成功: {redis_client}")
             
-            # 初始化 Redis 分组器和锁管理器
-            self._redis_grouper = RedisAlertGrouper(redis_client)
+            # 初始化优化的 Redis 分组器和锁管理器
+            self._redis_grouper = OptimizedAlertGrouper(redis_client, max_concurrent=100)
             self._lock_manager = AlertLockManager(redis_client)
             
             self._redis_init_pending = False
@@ -387,8 +387,9 @@ class AlertManager:
                 # 批量发送告警
                 await self.notifier.send_batch_notification(alerts, rule, is_recovery=is_recovery)
                 
-                # 更新所有告警的最后发送时间
+                # 更新所有告警的最后发送时间（仅更新仍存在的告警）
                 current_time = int(time.time())
+                updated_count = 0
                 for alert in alerts:
                     try:
                         # 重新查询对象以确保在当前会话中
@@ -397,8 +398,13 @@ class AlertManager:
                         db_alert = result.scalar_one_or_none()
                         if db_alert:
                             db_alert.last_sent_at = current_time
+                            updated_count += 1
+                        else:
+                            logger.debug(f"告警已不存在（可能已恢复或归档）: {alert.fingerprint}")
                     except Exception as e:
                         logger.warning(f"更新告警发送时间失败: {alert.fingerprint}, error={str(e)}")
+                
+                logger.debug(f"更新了 {updated_count}/{len(alerts)} 个告警的发送时间")
                 
                 logger.info(f"✅ {status_text}分组发送成功: {group_key}")
                 

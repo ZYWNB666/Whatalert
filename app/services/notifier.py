@@ -601,7 +601,7 @@ class NotificationService:
         )
         
         # 使用独立的数据库会话保存记录
-        async with self.SessionLocal() as db:
+        async with self.db_manager.session() as db:
             db.add(record)
             await db.commit()
     
