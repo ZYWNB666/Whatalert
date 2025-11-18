@@ -4,6 +4,17 @@
     <div class="toolbar">
       <el-space>
         <el-button :icon="Refresh" @click="loadData" :loading="loading">刷新</el-button>
+        <span class="refresh-config">
+          <span class="label">自动刷新:</span>
+          <el-select v-model="refreshInterval" size="small" style="width: 100px" @change="handleRefreshIntervalChange">
+            <el-option label="关闭" :value="0" />
+            <el-option label="5秒" :value="5" />
+            <el-option label="10秒" :value="10" />
+            <el-option label="15秒" :value="15" />
+            <el-option label="30秒" :value="30" />
+            <el-option label="60秒" :value="60" />
+          </el-select>
+        </span>
         <span class="last-update-time">上次更新: {{ lastUpdateTime }}</span>
       </el-space>
     </div>
@@ -45,7 +56,7 @@
             </div>
             <div class="stat-info">
               <div class="stat-value">{{ stats.resolved }}</div>
-              <div class="stat-label">已恢复</div>
+              <div class="stat-label">24h已恢复</div>
             </div>
           </div>
         </el-card>
@@ -105,9 +116,9 @@
                 <el-tag type="danger" size="small">{{ row.count }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="started_at" label="触发时间" width="180">
+            <el-table-column prop="latest_started_at" label="触发时间" width="180">
               <template #default="{ row }">
-                {{ formatTime(row.started_at) }}
+                {{ formatTime(row.latest_started_at) }}
               </template>
             </el-table-column>
           </el-table>
@@ -118,10 +129,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
-import { getCurrentAlerts, getAlertHistory, getAlertRules } from '@/api/alertRules'
+import { getCurrentAlertsGrouped, getCurrentAlertsStats, countAlertHistory, getAlertRules } from '@/api/alertRules'
 import dayjs from 'dayjs'
 
 const router = useRouter()
@@ -133,66 +144,36 @@ const stats = ref({
   rules: 0
 })
 
-const recentAlerts = ref([])
+const groupedRecentAlerts = ref([])
 const loading = ref(false)
 const lastUpdateTime = ref('--')
+const refreshInterval = ref(15)
 let refreshTimer = null
-
-// 按规则名分组的最近告警
-const groupedRecentAlerts = computed(() => {
-  const grouped = {}
-  
-  // 按 rule_id 分组
-  recentAlerts.value.forEach(alert => {
-    const key = alert.rule_id
-    if (!grouped[key]) {
-      grouped[key] = {
-        rule_id: alert.rule_id,
-        rule_name: alert.rule_name,
-        severity: alert.severity,
-        status: alert.status,
-        started_at: alert.started_at,
-        count: 0,
-        alerts: []
-      }
-    }
-    grouped[key].count++
-    grouped[key].alerts.push(alert)
-    // 保留最新的触发时间
-    if (alert.started_at > grouped[key].started_at) {
-      grouped[key].started_at = alert.started_at
-      // 同时更新状态和等级为最新的
-      grouped[key].status = alert.status
-      grouped[key].severity = alert.severity
-    }
-  })
-  
-  // 转换为数组并排序（按触发时间倒序，最新的在前）
-  return Object.values(grouped)
-    .sort((a, b) => b.started_at - a.started_at)
-    .slice(0, 10)
-})
 
 const loadData = async () => {
   loading.value = true
   try {
-    // 获取当前告警用于统计 firing 和 pending
-    const currentAlerts = await getCurrentAlerts()
+    // 获取当前告警统计 - 只获取数量，不获取详情
+    const statsData = await getCurrentAlertsStats()
+    stats.value.firing = statsData.firing || 0
+    stats.value.pending = statsData.pending || 0
     
-    // 计算统计数据
-    stats.value.firing = currentAlerts.filter(a => a.status === 'firing').length
-    stats.value.pending = currentAlerts.filter(a => a.status === 'pending').length
-    
-    // 获取历史告警数量（已恢复）
-    const historyAlerts = await getAlertHistory({ limit: 1000 })
-    stats.value.resolved = historyAlerts.length
+    // 获取最近24小时恢复的告警数量 - 直接统计，不获取数据
+    const oneDayAgo = dayjs().subtract(24, 'hour').unix()
+    const now = dayjs().unix()
+    const historyCount = await countAlertHistory({ 
+      start_time: oneDayAgo,
+      end_time: now
+    })
+    stats.value.resolved = historyCount.count || 0
     
     // 获取告警规则总数
     const rules = await getAlertRules()
-    stats.value.rules = rules.length
+    stats.value.rules = Array.isArray(rules) ? rules.length : 0
     
-    // 获取所有当前告警用于分组展示
-    recentAlerts.value = currentAlerts
+    // 获取按规则分组的告警（每页10个分组）
+    const groupedData = await getCurrentAlertsGrouped({ page: 1, page_size: 10 })
+    groupedRecentAlerts.value = groupedData.groups || []
     
     // 更新最后刷新时间
     lastUpdateTime.value = dayjs().format('HH:mm:ss')
@@ -248,12 +229,29 @@ const formatTime = (timestamp) => {
   return dayjs.unix(timestamp).format('YYYY-MM-DD HH:mm:ss')
 }
 
+const handleRefreshIntervalChange = (value) => {
+  // 清除旧的定时器
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+
+  // 如果选择了刷新间隔，设置新的定时器
+  if (value > 0) {
+    refreshTimer = setInterval(() => {
+      loadData()
+    }, value * 1000)
+  }
+}
+
 onMounted(() => {
   loadData()
-  // 每10秒自动刷新一次数据，提升实时性
-  refreshTimer = setInterval(() => {
-    loadData()
-  }, 10000)
+  // 设置初始自动刷新（默认10秒）
+  if (refreshInterval.value > 0) {
+    refreshTimer = setInterval(() => {
+      loadData()
+    }, refreshInterval.value * 1000)
+  }
 })
 
 onUnmounted(() => {
@@ -271,6 +269,17 @@ onUnmounted(() => {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    
+    .refresh-config {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      
+      .label {
+        color: #606266;
+        font-size: 14px;
+      }
+    }
     
     .last-update-time {
       color: #909399;

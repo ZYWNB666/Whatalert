@@ -31,33 +31,33 @@
       <!-- 规则卡片列表 -->
       <div v-loading="loading" class="rule-cards">
         <el-card
-          v-for="(group, ruleName) in groupedAlerts"
-          :key="ruleName"
+          v-for="group in groupedAlerts"
+          :key="group.rule_id"
           class="rule-card"
           shadow="hover"
-          @click="openRuleDetail(ruleName, group)"
+          @click="openRuleDetail(group.rule_name, group)"
         >
           <div class="rule-card-content">
             <div class="rule-header">
-              <span class="rule-name">{{ ruleName }}</span>
-              <el-badge :value="group.length" class="badge" />
+              <span class="rule-name">{{ group.rule_name }}</span>
+              <el-badge :value="group.count" class="badge" />
             </div>
             <div class="rule-info">
               <el-tag
-                :type="getSeverityType(group[0].severity)"
+                :type="getSeverityType(group.severity)"
                 size="small"
               >
-                {{ group[0].severity }}
+                {{ group.severity }}
               </el-tag>
               <el-tag
-                :type="getStatusType(group[0].status)"
+                :type="getStatusType(group.status)"
                 size="small"
                 style="margin-left: 8px"
               >
-                {{ getStatusText(group[0].status) }}
+                {{ getStatusText(group.status) }}
               </el-tag>
               <span class="rule-time">
-                最新触发: {{ formatTime(group[0].started_at) }}
+                最新触发: {{ formatTime(group.latest_started_at) }}
               </span>
             </div>
           </div>
@@ -208,12 +208,12 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { getCurrentAlerts } from '@/api/alertRules'
+import { getCurrentAlerts, getCurrentAlertsGrouped } from '@/api/alertRules'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 
 const loading = ref(false)
-const alerts = ref([])
+const groupedAlerts = ref([])  // 从后端获取的分组数据
 const totalCount = ref(0)
 const detailVisible = ref(false)
 const currentAlert = ref(null)
@@ -223,21 +223,10 @@ let refreshTimer = null
 
 // 规则详情相关
 const selectedRule = ref(null)
+const selectedRuleId = ref(null)
 const ruleAlerts = ref([])
 const ruleCurrentPage = ref(1)
 const rulePageSize = ref(10)
-
-// 按规则分组
-const groupedAlerts = computed(() => {
-  const groups = {}
-  alerts.value.forEach(alert => {
-    if (!groups[alert.rule_name]) {
-      groups[alert.rule_name] = []
-    }
-    groups[alert.rule_name].push(alert)
-  })
-  return groups
-})
 
 // 规则详情分页数据
 const paginatedRuleAlerts = computed(() => {
@@ -249,27 +238,14 @@ const paginatedRuleAlerts = computed(() => {
 const loadAlerts = async () => {
   loading.value = true
   try {
-    // 获取所有数据
-    const params = {
-      limit: 1000,
-      skip: 0
-    }
-    
-    const result = await getCurrentAlerts(params)
-    console.log('API返回:', result)
-    
-    // 处理返回结果
-    if (Array.isArray(result)) {
-      alerts.value = result
-      totalCount.value = result.length
-    } else {
-      alerts.value = result.alerts || []
-      totalCount.value = result.total || 0
-    }
-    
-    // 如果在规则详情页，更新规则告警数据
     if (selectedRule.value) {
-      ruleAlerts.value = alerts.value.filter(alert => alert.rule_name === selectedRule.value)
+      // 在规则详情页，只获取该规则的告警
+      await loadRuleAlerts()
+    } else {
+      // 在列表页，只获取统计数据（最多100条分组）
+      const result = await getCurrentAlertsGrouped({ page: 1, page_size: 100 })
+      groupedAlerts.value = result.groups || []
+      totalCount.value = result.total || 0
     }
     
     // 更新最后刷新时间
@@ -281,16 +257,43 @@ const loadAlerts = async () => {
   }
 }
 
-const openRuleDetail = (ruleName, group) => {
+const loadRuleAlerts = async () => {
+  try {
+    const params = {
+      rule_id: selectedRuleId.value,
+      limit: 1000,
+      skip: 0
+    }
+    
+    const result = await getCurrentAlerts(params)
+    if (Array.isArray(result)) {
+      ruleAlerts.value = result
+    } else {
+      ruleAlerts.value = result.alerts || []
+    }
+  } catch (error) {
+    console.error('加载规则告警失败:', error)
+  }
+}
+
+const openRuleDetail = async (ruleName, group) => {
   selectedRule.value = ruleName
-  ruleAlerts.value = [...group]
+  selectedRuleId.value = group.rule_id
   ruleCurrentPage.value = 1
+  
+  // 加载该规则的所有告警
+  loading.value = true
+  await loadRuleAlerts()
+  loading.value = false
 }
 
 const backToList = () => {
   selectedRule.value = null
+  selectedRuleId.value = null
   ruleAlerts.value = []
   ruleCurrentPage.value = 1
+  // 返回列表时重新加载统计数据
+  loadAlerts()
 }
 
 const handleRulePageChange = () => {

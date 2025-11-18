@@ -311,7 +311,7 @@ async def list_current_alerts_grouped(
         
         all_events = filtered_events
     
-    # 2. 按规则名称分组
+    # 2. 按规则名称分组（只统计，不返回详细告警列表）
     groups = {}
     for event in all_events:
         rule_name = event.rule_name
@@ -322,26 +322,10 @@ async def list_current_alerts_grouped(
                 "count": 0,
                 "severity": event.severity,
                 "status": event.status,
-                "latest_started_at": event.started_at,
-                "alerts": []
+                "latest_started_at": event.started_at
             }
         
         groups[rule_name]["count"] += 1
-        groups[rule_name]["alerts"].append({
-            "id": event.id,
-            "fingerprint": event.fingerprint,
-            "rule_name": event.rule_name,
-            "rule_id": event.rule_id,
-            "status": event.status,
-            "severity": event.severity,
-            "started_at": event.started_at,
-            "last_eval_at": event.last_eval_at,
-            "last_sent_at": event.last_sent_at,
-            "value": event.value,
-            "labels": event.labels,
-            "annotations": event.annotations,
-            "expr": event.expr
-        })
         
         # 更新最新触发时间和状态
         if event.started_at > groups[rule_name]["latest_started_at"]:
@@ -381,7 +365,7 @@ async def list_alert_history(
     label_key: str = Query(None, description="标签键"),
     label_value: str = Query(None, description="标签值"),
     skip: int = 0,
-    limit: int = 100,
+    limit: int = Query(100, le=10000),  # 允许最大10000条
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -417,6 +401,77 @@ async def list_alert_history(
     return events
 
 
+@router.get("/events/history/count")
+async def count_alert_history(
+    project_id: int = Query(None, description="项目ID,不传则显示所有项目"),
+    rule_id: int = Query(None, description="告警规则ID"),
+    severity: str = Query(None, description="告警等级: critical, warning, info"),
+    start_time: int = Query(None, description="开始时间(Unix时间戳)"),
+    end_time: int = Query(None, description="结束时间(Unix时间戳)"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """统计历史告警数量 - 支持多条件过滤"""
+    conditions = [AlertEventHistory.tenant_id == current_user.tenant_id]
+    
+    if project_id is not None:
+        conditions.append(AlertEventHistory.project_id == project_id)
+    
+    if rule_id is not None:
+        conditions.append(AlertEventHistory.rule_id == rule_id)
+    
+    if severity:
+        conditions.append(AlertEventHistory.severity == severity)
+    
+    if start_time is not None:
+        conditions.append(AlertEventHistory.started_at >= start_time)
+    
+    if end_time is not None:
+        conditions.append(AlertEventHistory.resolved_at <= end_time)
+    
+    stmt = select(func.count()).select_from(AlertEventHistory).where(and_(*conditions))
+    count = await db.scalar(stmt)
+    
+    return {"count": count or 0}
+
+
+@router.get("/events/current/stats")
+async def get_current_alerts_stats(
+    project_id: int = Query(None, description="项目ID,不传则显示所有项目"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取当前告警统计 - 只返回数量，不返回告警详情"""
+    conditions = [
+        AlertEvent.tenant_id == current_user.tenant_id,
+        AlertEvent.status.in_(['pending', 'firing'])
+    ]
+    
+    if project_id is not None:
+        conditions.append(AlertEvent.project_id == project_id)
+    
+    # 统计 firing 数量
+    firing_stmt = select(func.count()).select_from(AlertEvent).where(
+        and_(*conditions, AlertEvent.status == 'firing')
+    )
+    firing_count = await db.scalar(firing_stmt)
+    
+    # 统计 pending 数量
+    pending_stmt = select(func.count()).select_from(AlertEvent).where(
+        and_(*conditions, AlertEvent.status == 'pending')
+    )
+    pending_count = await db.scalar(pending_stmt)
+    
+    return {
+        "firing": firing_count or 0,
+        "pending": pending_count or 0,
+        "total": (firing_count or 0) + (pending_count or 0)
+    }
+
+    
+    return {"count": count}
+
+
 @router.get("/events/history/grouped")
 async def list_alert_history_grouped(
     project_id: int = Query(None, description="项目ID,不传则显示所有项目"),
@@ -436,7 +491,7 @@ async def list_alert_history_grouped(
     result = await db.execute(stmt)
     all_events = result.scalars().all()
     
-    # 2. 按规则名称分组
+    # 2. 按规则名称分组（只统计，不返回详细告警列表）
     groups = {}
     for event in all_events:
         rule_name = event.rule_name
@@ -447,27 +502,11 @@ async def list_alert_history_grouped(
                 "count": 0,
                 "severity": event.severity,
                 "latest_resolved_at": event.resolved_at,
-                "total_duration": 0,
-                "alerts": []
+                "total_duration": 0
             }
         
         groups[rule_name]["count"] += 1
         groups[rule_name]["total_duration"] += event.duration
-        groups[rule_name]["alerts"].append({
-            "id": event.id,
-            "fingerprint": event.fingerprint,
-            "rule_name": event.rule_name,
-            "rule_id": event.rule_id,
-            "status": event.status,
-            "severity": event.severity,
-            "started_at": event.started_at,
-            "resolved_at": event.resolved_at,
-            "duration": event.duration,
-            "value": event.value,
-            "labels": event.labels,
-            "annotations": event.annotations,
-            "expr": event.expr
-        })
         
         # 更新最新恢复时间和等级
         if event.resolved_at > groups[rule_name]["latest_resolved_at"]:

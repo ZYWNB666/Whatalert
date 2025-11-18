@@ -52,10 +52,37 @@ export const getCurrentAlerts = (params) => {
   })
 }
 
+// 获取当前告警统计
+export const getCurrentAlertsStats = (params) => {
+  return request({
+    url: '/alert-rules/events/current/stats',
+    method: 'get',
+    params
+  })
+}
+
+// 获取当前告警分组
+export const getCurrentAlertsGrouped = (params) => {
+  return request({
+    url: '/alert-rules/events/current/grouped',
+    method: 'get',
+    params
+  })
+}
+
 // 获取历史告警
 export const getAlertHistory = (params) => {
   return request({
     url: '/alert-rules/events/history',
+    method: 'get',
+    params
+  })
+}
+
+// 统计历史告警数量
+export const countAlertHistory = (params) => {
+  return request({
+    url: '/alert-rules/events/history/count',
     method: 'get',
     params
   })

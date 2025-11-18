@@ -69,63 +69,82 @@
       
       <!-- 分组显示模式 -->
       <div v-if="groupByRule" class="grouped-alerts">
-        <el-collapse v-model="activeGroups">
-          <el-collapse-item
-            v-for="(group, ruleName) in groupedAlerts"
-            :key="ruleName"
-            :name="ruleName"
-          >
-            <template #title>
-              <div class="group-title">
-                <span class="rule-name">{{ ruleName }}</span>
-                <el-badge :value="group.length" class="badge" />
-                <el-tag
-                  :type="getSeverityType(group[0].severity)"
-                  size="small"
-                  style="margin-left: 10px"
-                >
-                  {{ group[0].severity }}
-                </el-tag>
-              </div>
-            </template>
-            <el-table :data="group" style="width: 100%">
-              <el-table-column prop="duration" label="持续时间" width="120">
-                <template #default="{ row }">
-                  {{ formatDuration(row.duration) }}
-                </template>
-              </el-table-column>
-              <el-table-column label="标签" min-width="200">
-                <template #default="{ row }">
+        <div v-if="Object.keys(paginatedGroups).length > 0">
+          <el-collapse v-model="activeGroups">
+            <el-collapse-item
+              v-for="(group, ruleName) in paginatedGroups"
+              :key="ruleName"
+              :name="ruleName"
+            >
+              <template #title>
+                <div class="group-title">
+                  <span class="rule-name">{{ ruleName }}</span>
+                  <el-badge :value="group.length" class="badge" />
                   <el-tag
-                    v-for="(value, key) in getDisplayLabels(row.labels)"
-                    :key="key"
+                    :type="getSeverityType(group[0].severity)"
                     size="small"
-                    style="margin-right: 5px"
+                    style="margin-left: 10px"
                   >
-                    {{ key }}: {{ value }}
+                    {{ group[0].severity }}
                   </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="started_at" label="触发时间" width="180">
-                <template #default="{ row }">
-                  {{ formatTime(row.started_at) }}
-                </template>
-              </el-table-column>
-              <el-table-column prop="resolved_at" label="恢复时间" width="180">
-                <template #default="{ row }">
-                  {{ formatTime(row.resolved_at) }}
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="100">
-                <template #default="{ row }">
-                  <el-button link type="primary" size="small" @click="showDetail(row)">
-                    详情
-                  </el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </el-collapse-item>
-        </el-collapse>
+                </div>
+              </template>
+              <el-table :data="group" style="width: 100%">
+                <el-table-column prop="duration" label="持续时间" width="120">
+                  <template #default="{ row }">
+                    {{ formatDuration(row.duration) }}
+                  </template>
+                </el-table-column>
+                <el-table-column label="标签" min-width="200">
+                  <template #default="{ row }">
+                    <el-tag
+                      v-for="(value, key) in getDisplayLabels(row.labels)"
+                      :key="key"
+                      size="small"
+                      style="margin-right: 5px"
+                    >
+                      {{ key }}: {{ value }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="started_at" label="触发时间" width="180">
+                  <template #default="{ row }">
+                    {{ formatTime(row.started_at) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="resolved_at" label="恢复时间" width="180">
+                  <template #default="{ row }">
+                    {{ formatTime(row.resolved_at) }}
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="100">
+                  <template #default="{ row }">
+                    <el-button link type="primary" size="small" @click="showDetail(row)">
+                      详情
+                    </el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-collapse-item>
+          </el-collapse>
+          
+          <!-- 分页组件 -->
+          <div style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center;">
+            <div style="color: #606266;">
+              共 {{ alerts.length }} 条告警，分为 {{ totalGroups }} 个规则
+            </div>
+            <el-pagination
+              v-model:current-page="currentPage"
+              v-model:page-size="pageSize"
+              :page-sizes="[5, 10, 20, 50]"
+              :total="totalGroups"
+              layout="sizes, prev, pager, next, jumper"
+              @size-change="handleSizeChange"
+              @current-change="handleCurrentChange"
+            />
+          </div>
+        </div>
+        <el-empty v-else description="暂无数据" />
       </div>
       
       <!-- 平铺显示模式 -->
@@ -235,17 +254,24 @@ const alerts = ref([])
 const detailVisible = ref(false)
 const currentAlert = ref(null)
 const groupByRule = ref(true)
-const activeGroups = ref([])
-const isFirstLoad = ref(true)  // 标记是否首次加载
+const activeGroups = ref([])  // 默认空数组，表示全部折叠
+
+// 分页相关
+const currentPage = ref(1)
+const pageSize = ref(10)
+
+// 默认时间范围：当前时间向前推1天
+const now = new Date()
+const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
 
 // 查询条件
-const timeRange = ref([])
+const timeRange = ref([oneDayAgo, now])
 const queryForm = ref({
   severity: '',
   label_key: '',
   label_value: '',
-  start_time: null,
-  end_time: null
+  start_time: Math.floor(oneDayAgo.getTime() / 1000),
+  end_time: Math.floor(now.getTime() / 1000)
 })
 
 // 按规则分组
@@ -260,6 +286,27 @@ const groupedAlerts = computed(() => {
   return groups
 })
 
+// 计算总分组数
+const totalGroups = computed(() => {
+  return Object.keys(groupedAlerts.value).length
+})
+
+// 当前页显示的分组
+const paginatedGroups = computed(() => {
+  const allGroups = groupedAlerts.value
+  const groupNames = Object.keys(allGroups)
+  
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  const currentGroupNames = groupNames.slice(start, end)
+  
+  const result = {}
+  currentGroupNames.forEach(name => {
+    result[name] = allGroups[name]
+  })
+  return result
+})
+
 const handleTimeRangeChange = (value) => {
   if (value && value.length === 2) {
     queryForm.value.start_time = Math.floor(value[0].getTime() / 1000)
@@ -271,36 +318,49 @@ const handleTimeRangeChange = (value) => {
 }
 
 const handleQuery = () => {
+  currentPage.value = 1  // 重置到第一页
   loadAlerts()
 }
 
 const handleReset = () => {
-  timeRange.value = []
+  // 重置为默认1天时间范围
+  const now = new Date()
+  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+  
+  timeRange.value = [oneDayAgo, now]
   queryForm.value = {
     severity: '',
     label_key: '',
     label_value: '',
-    start_time: null,
-    end_time: null
+    start_time: Math.floor(oneDayAgo.getTime() / 1000),
+    end_time: Math.floor(now.getTime() / 1000)
   }
+  currentPage.value = 1  // 重置到第一页
   loadAlerts()
 }
 
 const handleGroupChange = () => {
-  if (groupByRule.value) {
-    // 切换到分组模式时，展开所有分组
-    activeGroups.value = Object.keys(groupedAlerts.value)
+  // 切换到分组模式时，保持折叠状态
+  if (!groupByRule.value) {
+    activeGroups.value = []
   }
+}
+
+const handleSizeChange = (val) => {
+  pageSize.value = val
+  currentPage.value = 1  // 改变页大小时重置到第一页
+}
+
+const handleCurrentChange = (val) => {
+  currentPage.value = val
+  // 切换页面时，保持折叠状态（不自动展开）
 }
 
 const loadAlerts = async () => {
   loading.value = true
   try {
-    // 保存当前展开的分组状态
-    const previousActiveGroups = [...activeGroups.value]
-    
     // 构建查询参数
-    const params = { limit: 100 }
+    const params = { limit: 1000 }  // 加载更多数据以支持分页
     if (queryForm.value.severity) {
       params.severity = queryForm.value.severity
     }
@@ -319,17 +379,7 @@ const loadAlerts = async () => {
     
     alerts.value = await getAlertHistory(params)
     
-    // 只在首次加载时展开所有分组
-    if (groupByRule.value && isFirstLoad.value) {
-      activeGroups.value = Object.keys(groupedAlerts.value)
-      isFirstLoad.value = false
-    } else if (groupByRule.value) {
-      // 刷新时保持之前的展开状态
-      const currentGroups = Object.keys(groupedAlerts.value)
-      activeGroups.value = previousActiveGroups.filter(group => 
-        currentGroups.includes(group)
-      )
-    }
+    // 加载后保持折叠状态（不自动展开任何分组）
   } catch (error) {
     console.error('加载失败:', error)
   } finally {
@@ -423,6 +473,11 @@ onMounted(() => {
   :deep(.el-collapse-item__content) {
     padding-bottom: 15px;
   }
+}
+
+:deep(.el-pagination) {
+  display: flex;
+  justify-content: flex-end;
 }
 </style>
 
