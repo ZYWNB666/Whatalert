@@ -1,22 +1,45 @@
-"""告警管理器"""
+"""告警管理器
+
+负责管理告警的生命周期、静默检查、通知发送和告警分组。
+"""
 import time
 import asyncio
 from typing import List, Dict, Any, Optional
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+
 from app.models.alert import AlertEvent, AlertEventHistory, AlertRule
 from app.models.silence import SilenceRule
 from app.services.notifier import NotificationService
 from app.services.alert_grouper import AlertGrouper
+from app.db.database import DatabaseSessionManager
 
 
 class AlertManager:
-    """告警管理器"""
+    """告警管理器
+    
+    负责管理告警的完整生命周期，包括：
+    - 告警发送和静默检查
+    - 告警分组和批量发送
+    - 告警恢复通知
+    - 告警归档
+    
+    Attributes:
+        db_manager: 数据库会话管理器
+        notifier: 通知服务
+        grouper: 告警分组器（内存版本）
+        _grouping_enabled: 是否启用告警分组
+        _use_redis: 是否使用 Redis 分组器
+    """
     
     def __init__(self, use_redis: bool = True):
-        from app.db.database import AsyncSessionLocal
-        self.SessionLocal = AsyncSessionLocal
+        """初始化告警管理器
+        
+        Args:
+            use_redis: 是否使用 Redis 分组器，默认 True
+        """
+        self.db_manager = DatabaseSessionManager()
         self.notifier = NotificationService()
         self._grouping_enabled = True  # 是否启用告警分组
         self._grouping_task = None
@@ -28,9 +51,6 @@ class AlertManager:
         # 初始化分组器（内存版本作为后备）
         self.grouper = AlertGrouper()
     
-    async def get_db_session(self):
-        """获取新的数据库会话"""
-        return self.SessionLocal()
     
     async def _init_redis_components(self):
         """异步初始化 Redis 组件"""
@@ -117,9 +137,8 @@ class AlertManager:
             logger.info(f"告警已添加到分组器: {alert.fingerprint}")
             
             # 标记为已处理（避免重复添加）
-            async with self.SessionLocal() as db:
+            async with self.db_manager.session() as db:
                 alert.last_sent_at = current_time
-                await db.commit()
         else:
             # 直接发送（不分组）
             if not self.should_send_notification(alert):
@@ -129,9 +148,8 @@ class AlertManager:
             await self.notifier.send_notification(alert, rule, is_recovery=False)
             
             # 更新最后发送时间
-            async with self.SessionLocal() as db:
+            async with self.db_manager.session() as db:
                 alert.last_sent_at = int(time.time())
-                await db.commit()
     
     async def send_recovery(self, alert: AlertEvent, rule: AlertRule):
         """发送恢复通知"""
@@ -161,7 +179,7 @@ class AlertManager:
         current_time = int(time.time())
         
         # 使用独立会话查询生效的静默规则
-        async with self.SessionLocal() as db:
+        async with self.db_manager.session(auto_commit=False) as db:
             # 查询生效的静默规则
             stmt = select(SilenceRule).where(
                 SilenceRule.tenant_id == alert.tenant_id,
@@ -310,9 +328,14 @@ class AlertManager:
                 await asyncio.sleep(5)  # 发生错误时等待后重试
     
     async def _send_alert_group(self, group, is_recovery: bool = False):
-        """发送告警分组（支持对象和字典格式）"""
+        """发送告警分组（支持对象和字典格式）
+        
+        Args:
+            group: 告警分组对象或字典
+            is_recovery: 是否为恢复告警
+        """
         # 使用独立的数据库会话
-        async with self.SessionLocal() as db:
+        async with self.db_manager.session() as db:
             try:
                 # 兼容对象和字典两种格式
                 if isinstance(group, dict):
@@ -377,8 +400,6 @@ class AlertManager:
                     except Exception as e:
                         logger.warning(f"更新告警发送时间失败: {alert.fingerprint}, error={str(e)}")
                 
-                await db.commit()
-                
                 logger.info(f"✅ {status_text}分组发送成功: {group_key}")
                 
                 # 标记分组为已发送（对象格式才需要）
@@ -389,7 +410,6 @@ class AlertManager:
                 await self.active_grouper.clear_sent_group(group_key, is_recovery)
                 
             except Exception as e:
-                await db.rollback()
                 group_key = group.get('group_key') if isinstance(group, dict) else getattr(group, 'group_key', 'unknown')
                 logger.error(f"❌ 发送告警分组失败: {group_key}, error={str(e)}")
                 import traceback

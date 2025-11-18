@@ -61,7 +61,12 @@
       </el-table>
     </el-card>
     
-    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑静默规则' : '创建静默规则'" width="700px">
+    <el-dialog
+      v-model="dialogVisible"
+      :title="isEdit ? '编辑静默规则' : '创建静默规则'"
+      width="700px"
+      :before-close="handleDialogClose"
+    >
       <el-form :model="form" label-width="100px">
         <el-form-item label="名称">
           <el-input v-model="form.name" placeholder="请输入静默规则名称" />
@@ -282,6 +287,56 @@ const addMatcher = () => {
 const removeMatcher = (index) => {
   if (form.value.matchers.length > 1) {
     form.value.matchers.splice(index, 1)
+  }
+}
+
+// 检查表单是否有内容
+const hasFormContent = () => {
+  // 检查名称
+  if (form.value.name && form.value.name.trim()) return true
+  
+  // 检查描述
+  if (form.value.description && form.value.description.trim()) return true
+  
+  // 检查备注
+  if (form.value.comment && form.value.comment.trim()) return true
+  
+  // 检查时间范围
+  if (timeRange.value && timeRange.value.length === 2) return true
+  
+  // 检查匹配器是否有填写内容
+  for (const matcher of form.value.matchers) {
+    if (matcher.label && matcher.label.trim()) return true
+    if (matcher.value && matcher.value.trim()) return true
+  }
+  
+  return false
+}
+
+// 处理对话框关闭
+const handleDialogClose = async (done) => {
+  // 如果表单有内容，提示用户确认
+  if (hasFormContent()) {
+    try {
+      await ElMessageBox.confirm(
+        '当前表单有未保存的内容，确定要关闭吗？',
+        '提示',
+        {
+          confirmButtonText: '确定关闭',
+          cancelButtonText: '继续编辑',
+          type: 'warning',
+          distinguishCancelAndClose: true
+        }
+      )
+      // 用户确认关闭
+      done()
+    } catch (action) {
+      // 用户取消或关闭确认框，不关闭对话框
+      // done(false) 或者什么都不做
+    }
+  } else {
+    // 表单没有内容，直接关闭
+    done()
   }
 }
 

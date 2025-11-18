@@ -23,11 +23,13 @@
           </template>
         </el-table-column>
         <el-table-column prop="url" label="地址" min-width="300" show-overflow-tooltip />
-        <el-table-column prop="is_enabled" label="状态" width="80">
+        <el-table-column prop="is_enabled" label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.is_enabled ? 'success' : 'info'" size="small">
-              {{ row.is_enabled ? '启用' : '禁用' }}
-            </el-tag>
+            <el-switch
+              v-model="row.is_enabled"
+              :disabled="!canUpdate"
+              @change="handleToggleStatus(row)"
+            />
           </template>
         </el-table-column>
         <el-table-column prop="is_default" label="默认" width="80">
@@ -341,6 +343,18 @@ const handleDelete = async (row) => {
     if (e !== 'cancel') {
       console.error('删除失败:', e)
     }
+  }
+}
+
+const handleToggleStatus = async (row) => {
+  try {
+    await updateDatasource(row.id, { is_enabled: row.is_enabled })
+    ElMessage.success(`已${row.is_enabled ? '启用' : '禁用'}数据源`)
+  } catch (error) {
+    // 失败时回滚状态
+    row.is_enabled = !row.is_enabled
+    console.error('更新状态失败:', error)
+    ElMessage.error('更新状态失败')
   }
 }
 

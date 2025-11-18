@@ -30,11 +30,12 @@
             <span v-if="!row.role_names || row.role_names.length === 0" style="color: #999">-</span>
           </template>
         </el-table-column>
-        <el-table-column prop="is_active" label="状态" width="80">
+        <el-table-column prop="is_active" label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.is_active ? 'success' : 'info'" size="small">
-              {{ row.is_active ? '激活' : '禁用' }}
-            </el-tag>
+            <el-switch
+              v-model="row.is_active"
+              @change="handleToggleStatus(row)"
+            />
           </template>
         </el-table-column>
         <el-table-column prop="is_superuser" label="超管" width="80">
@@ -344,6 +345,18 @@ const handleDelete = async (row) => {
     if (e !== 'cancel') {
       console.error('删除失败:', e)
     }
+  }
+}
+
+const handleToggleStatus = async (row) => {
+  try {
+    await updateUser(row.id, { is_active: row.is_active })
+    ElMessage.success(`已${row.is_active ? '激活' : '禁用'}用户`)
+  } catch (error) {
+    // 失败时回滚状态
+    row.is_active = !row.is_active
+    console.error('更新状态失败:', error)
+    ElMessage.error('更新状态失败')
   }
 }
 

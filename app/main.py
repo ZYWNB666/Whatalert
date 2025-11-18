@@ -2,11 +2,13 @@
 import asyncio
 import sys
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from loguru import logger
 
 from app.core.config import settings
+from app.core.exceptions import AlertSystemException
 from app.db.database import engine
 from app.db.redis_client import RedisClient
 from app.models.base import Base
@@ -111,6 +113,69 @@ app.add_middleware(
 # 审计日志中间件
 from app.middleware.audit import AuditMiddleware
 app.add_middleware(AuditMiddleware)
+
+
+# 全局异常处理器
+@app.exception_handler(AlertSystemException)
+async def alert_system_exception_handler(
+    request: Request,
+    exc: AlertSystemException
+) -> JSONResponse:
+    """处理自定义异常
+    
+    Args:
+        request: 请求对象
+        exc: 异常对象
+        
+    Returns:
+        JSONResponse: 标准化的错误响应
+    """
+    logger.error(
+        f"AlertSystemException: {exc.code} - {exc.message}",
+        extra={
+            "code": exc.code,
+            "details": exc.details,
+            "path": request.url.path,
+            "method": request.method
+        }
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict()
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(
+    request: Request,
+    exc: Exception
+) -> JSONResponse:
+    """处理未捕获的异常
+    
+    Args:
+        request: 请求对象
+        exc: 异常对象
+        
+    Returns:
+        JSONResponse: 通用错误响应
+    """
+    logger.exception(
+        f"Unhandled exception: {str(exc)}",
+        extra={
+            "path": request.url.path,
+            "method": request.method
+        }
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "code": "INTERNAL_SERVER_ERROR",
+                "message": "An internal server error occurred",
+                "details": {}
+            }
+        }
+    )
 
 # 注册路由
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["认证"])

@@ -1,4 +1,7 @@
-"""通知服务"""
+"""通知服务
+
+负责多渠道告警通知的发送，支持飞书、钉钉、企业微信、邮件和 Webhook。
+"""
 import time
 import json
 import re
@@ -10,17 +13,30 @@ from typing import List, Optional, Dict
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+
 from app.models.alert import AlertEvent, AlertRule
 from app.models.notification import NotificationChannel, NotificationRecord
 from app.models.settings import SystemSettings
+from app.db.database import DatabaseSessionManager
 
 
 class NotificationService:
-    """通知服务"""
+    """通知服务
+    
+    提供多渠道告警通知发送功能，支持：
+    - 飞书（高级卡片和文本消息）
+    - 钉钉（支持签名认证）
+    - 企业微信
+    - 邮件（HTML 模板）
+    - 自定义 Webhook
+    
+    Attributes:
+        db_manager: 数据库会话管理器
+    """
     
     def __init__(self):
-        from app.db.database import AsyncSessionLocal
-        self.SessionLocal = AsyncSessionLocal
+        """初始化通知服务"""
+        self.db_manager = DatabaseSessionManager()
     
     @staticmethod
     def render_template(template: str, alert: AlertEvent) -> str:
@@ -106,9 +122,17 @@ class NotificationService:
         alert: AlertEvent, 
         rule: AlertRule
     ) -> List[NotificationChannel]:
-        """获取通知渠道（支持路由）"""
+        """获取通知渠道（支持路由）
+        
+        Args:
+            alert: 告警事件
+            rule: 告警规则
+            
+        Returns:
+            符合条件的通知渠道列表
+        """
         # 使用独立的数据库会话
-        async with self.SessionLocal() as db:
+        async with self.db_manager.session(auto_commit=False) as db:
             # 从规则路由配置中获取渠道ID列表
             channel_ids = rule.route_config.get('notification_channels', [])
             
@@ -338,10 +362,8 @@ class NotificationService:
     
     async def send_email(self, channel: NotificationChannel, alert: AlertEvent, is_recovery: bool):
         """发送邮件通知"""
-        from app.models.settings import SystemSettings
-        
         # 使用独立的数据库会话
-        async with self.SessionLocal() as db:
+        async with self.db_manager.session(auto_commit=False) as db:
             # 从数据库获取 SMTP 配置
             stmt = select(SystemSettings).where(SystemSettings.key == 'smtp_config')
             result = await db.execute(stmt)
@@ -742,7 +764,7 @@ class NotificationService:
             return
         
         # 使用独立的数据库会话
-        async with self.SessionLocal() as db:
+        async with self.db_manager.session(auto_commit=False) as db:
             # 从数据库获取 SMTP 配置
             stmt = select(SystemSettings).where(SystemSettings.key == 'smtp_config')
             result = await db.execute(stmt)

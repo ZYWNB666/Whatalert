@@ -109,6 +109,37 @@ const router = createRouter({
 router.beforeEach(async (to, from, next) => {
   const userStore = useUserStore()
   
+  // 检查是否从编辑/创建页面离开
+  const isLeavingEditPage = (
+    from.path.includes('/create') ||
+    from.path.includes('/edit')
+  ) && !to.path.includes('/create') && !to.path.includes('/edit')
+  
+  if (isLeavingEditPage) {
+    // 动态导入 ElMessageBox 以避免循环依赖
+    const { ElMessageBox } = await import('element-plus')
+    
+    try {
+      await ElMessageBox.confirm(
+        '当前页面有未保存的内容，确定要离开吗？',
+        '提示',
+        {
+          confirmButtonText: '确定离开',
+          cancelButtonText: '取消',
+          type: 'warning',
+          distinguishCancelAndClose: true
+        }
+      )
+      // 用户确认离开，继续导航
+    } catch (action) {
+      // 用户取消或关闭对话框，阻止导航
+      if (action === 'cancel' || action === 'close') {
+        next(false)
+        return
+      }
+    }
+  }
+  
   if (to.path !== '/login' && !userStore.token) {
     next('/login')
   } else if (to.path === '/login' && userStore.token) {

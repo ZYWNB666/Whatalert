@@ -40,9 +40,11 @@
         </el-table-column>
         <el-table-column prop="is_active" label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.is_active ? 'success' : 'danger'" size="small">
-              {{ row.is_active ? '激活' : '禁用' }}
-            </el-tag>
+            <el-switch
+              v-model="row.is_active"
+              :disabled="row.user_role !== 'admin'"
+              @change="handleToggleStatus(row)"
+            />
           </template>
         </el-table-column>
         <el-table-column label="操作" width="250" fixed="right">
@@ -572,6 +574,18 @@ const handleChangeRole = async () => {
       ElMessage.error(error.response?.data?.detail || '修改失败')
     }
   })
+}
+
+const handleToggleStatus = async (row) => {
+  try {
+    await updateProject(row.id, { is_active: row.is_active })
+    ElMessage.success(`已${row.is_active ? '激活' : '禁用'}项目`)
+  } catch (error) {
+    // 失败时回滚状态
+    row.is_active = !row.is_active
+    console.error('更新状态失败:', error)
+    ElMessage.error('更新状态失败')
+  }
 }
 </script>
 

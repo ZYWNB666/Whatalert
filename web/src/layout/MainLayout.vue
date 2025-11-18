@@ -10,15 +10,16 @@
         class="el-menu-vertical"
         :router="true"
       >
-        <template v-for="route in menuRoutes" :key="route.path">
-          <el-menu-item 
-            v-if="!route.meta?.hidden"
-            :index="route.path"
+        <template v-for="menuRoute in menuRoutes" :key="menuRoute.path">
+          <el-menu-item
+            v-if="!menuRoute.meta?.hidden"
+            :index="`/${menuRoute.path}`"
+            @click="handleMenuClick(menuRoute.path)"
           >
-            <el-icon v-if="route.meta?.icon">
-              <component :is="route.meta.icon" />
+            <el-icon v-if="menuRoute.meta?.icon">
+              <component :is="menuRoute.meta.icon" />
             </el-icon>
-            <span>{{ route.meta?.title }}</span>
+            <span>{{ menuRoute.meta?.title }}</span>
           </el-menu-item>
         </template>
       </el-menu>
@@ -84,11 +85,7 @@
       </el-header>
       
       <el-main class="main-content">
-        <router-view v-slot="{ Component }">
-          <keep-alive>
-            <component :is="Component" />
-          </keep-alive>
-        </router-view>
+        <router-view />
       </el-main>
     </el-container>
   </el-container>
@@ -133,7 +130,9 @@ const menuRoutes = computed(() => {
 })
 
 const activeMenu = computed(() => {
-  return '/' + route.path.split('/')[1]
+  // 获取第一级路径作为激活菜单
+  const firstPath = route.path.split('/')[1]
+  return firstPath ? `/${firstPath}` : '/dashboard'
 })
 
 const currentTitle = computed(() => {
@@ -173,6 +172,11 @@ const handleLogout = async () => {
   } catch (e) {
     // 取消
   }
+}
+
+const handleMenuClick = (path) => {
+  // 使用绝对路径跳转
+  router.push(`/${path}`)
 }
 </script>
 
